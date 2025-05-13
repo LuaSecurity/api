@@ -182,26 +182,60 @@ app.post('/send/scriptlogs', async (req, res) => {
 });
 
 // Handle GET requests to /send/scriptlogs with proper error
-app.get('/send/scriptlogs', (req, res) => {
-    res.status(405).json({
-        status: 'error',
-        code: 'METHOD_NOT_ALLOWED',
-        message: 'This endpoint only accepts POST requests',
-        suggestion: 'Please check your request method and try again'
-    });
-});
+app.post('/send/scriptlogs', async (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const clientIP = req.ip || req.connection.remoteAddress;
 
-// Basic route to show API is running
-app.get('/status', (req, res) => {
-    res.json({
-        status: 'online',
-        version: '1.0.0',
-        timestamp: new Date().toISOString()
-    });
-});
+    // Autenticação
+    if (!authHeader || !Object.values(API_KEYS).includes(authHeader)) {
+        console.warn(`Unauthorized access attempt from ${clientIP}`);
+        return res.status(401).json({
+            status: 'error',
+            code: 'UNAUTHORIZED',
+            message: 'Invalid or missing API key'
+        });
+    }
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    // Validação de embed
+    const { embeds } = req.body;
+    if (
+        !embeds ||
+        !Array.isArray(embeds) ||
+        embeds.length === 0 ||
+        typeof embeds[0].title !== 'string' ||
+        typeof embeds[0].description !== 'string' ||
+        typeof embeds[0].color !== 'number'
+    ) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'INVALID_EMBED',
+            message: 'Payload must contain a valid "embeds" array with required fields (title, description, color).'
+        });
+    }
+
+    // Enviar para o webhook
+    try {
+        const webhookResponse = await axios.post(WEBHOOK_URL, { embeds }, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (webhookResponse.status >= 200 && webhookResponse.status < 300) {
+            return res.status(200).json({
+                status: 'success',
+                message: 'Embed successfully sent to Discord webhook',
+                logId: generateLogId(),
+                discordStatus: webhookResponse.status
+            });
+        } else {
+            throw new Error(`Discord API responded with status ${webhookResponse.status}`);
+        }
+    } catch (error) {
+        console.error('Webhook error:', error);
+        return res.status(500).json({
+            status: 'error',
+            code: 'WEBHOOK_FAILED',
+            message: 'Failed to send to webhook',
+            error: error.message
+        });
+    }
 });
