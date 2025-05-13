@@ -8,23 +8,25 @@ app.get('/Verify/:username', async (req, res) => {
     try {
         const { username } = req.params;
         
-        // URL do arquivo JSON no GitHub
+        // URL do arquivo JSON no GitHub (usando raw.githubusercontent.com)
         const githubUrl = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
         
         // Buscar o arquivo JSON do GitHub
         const response = await axios.get(githubUrl);
         const users = response.data;
         
-        // Verificar se o username existe
-        const userData = users.find(user => user.user.toLowerCase() === username.toLowerCase());
+        // Verificar se o username existe (comparação case-insensitive)
+        const userData = users.find(user => 
+            user.User.toLowerCase() === username.toLowerCase()
+        );
         
         if (userData) {
-            // Se encontrado, retorna os dados
+            // Se encontrado, retorna os dados formatados
             res.json({
                 status: 'success',
-                user: userData.user,
-                discord: userData.discord, // Note que no JSON está "discord" (com typo)
-                whitelist: userData.whitelist
+                user: userData.User,
+                discord: userData.Discord,
+                whitelist: userData.Whitelist
             });
         } else {
             // Se não encontrado
@@ -34,12 +36,18 @@ app.get('/Verify/:username', async (req, res) => {
             });
         }
     } catch (error) {
-        console.error(error);
+        console.error('Error:', error.message);
         res.status(500).json({
             status: 'error',
-            message: 'Internal server error'
+            message: 'Internal server error',
+            details: error.message
         });
     }
+});
+
+// Rota de teste para verificar se a API está online
+app.get('/', (req, res) => {
+    res.send('API de verificação de whitelist está online! Use /Verify/username');
 });
 
 // Iniciar o servidor
