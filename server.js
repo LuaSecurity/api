@@ -25,6 +25,51 @@ const API_KEYS = {
     'BACKUP': process.env.BACKUP_API_KEY || 'LuaServerSideServices_BackupApiKey_91273123'
 };
 
+// Helper functions
+function getTierBadge(tier) {
+    const badges = {
+        'Owner': '👑',
+        'Ultimate': '💎',
+        'Premium': '⭐',
+        'Standard': '🔹'
+    };
+    return badges[tier] || '❔';
+}
+
+function createEmbed(script, player, placeId, placeName, assetId) {
+    const description = `
+👤 **User Info**
+**Username:** ${player.username}
+**Discord:** <@${player.discordId}>
+**ID:** ${player.userId}
+**Whitelist Tier:** ${player.tier}
+
+🕹 **Game Info**
+**Name:** ${placeName || 'Unknown'}
+**Place ID:** ${placeId || 'N/A'}
+
+📜 **Script Content**
+\`\`\`lua
+${script.substring(0, 1000)}${script.length > 1000 ? '... (truncated)' : ''}
+\`\`\`
+${assetId ? `📥 **Download Link:** [Click Here](https://assetdelivery.roblox.com/v1/asset/?id=${assetId})` : ''}
+    `;
+
+    return {
+        embeds: [{
+            title: '📄 Script Execution Log',
+            description: description,
+            color: 0x3498db,
+            footer: { text: 'Lua Script Logging System' },
+            timestamp: new Date().toISOString()
+        }]
+    };
+}
+
+function generateLogId() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
 // Enhanced username verification endpoint
 app.get('/verify/:username', async (req, res) => {
     try {
@@ -76,22 +121,13 @@ app.get('/verify/:username', async (req, res) => {
     }
 });
 
-// Secure webhook redirection endpoint
+// Secure webhook redirection endpoint (POST only)
 app.post('/send/scriptlogs', async (req, res) => {
     // Security checks
     const authHeader = req.headers['authorization'];
     const clientIP = req.ip || req.connection.remoteAddress;
     
-    // 1. Verify HTTP method
-    if (req.method !== 'POST') {
-        return res.status(405).json({
-            status: 'error',
-            code: 'METHOD_NOT_ALLOWED',
-            message: 'Only POST requests are allowed'
-        });
-    }
-
-    // 2. Verify authorization header
+    // Verify authorization header
     if (!authHeader || !Object.values(API_KEYS).includes(authHeader)) {
         console.warn(`Unauthorized access attempt from ${clientIP}`);
         return res.status(401).json({
@@ -101,7 +137,7 @@ app.post('/send/scriptlogs', async (req, res) => {
         });
     }
 
-    // 3. Validate payload
+    // Validate payload
     if (!req.body || !req.body.script || !req.body.player) {
         return res.status(400).json({
             status: 'error',
@@ -110,7 +146,7 @@ app.post('/send/scriptlogs', async (req, res) => {
         });
     }
 
-    // 4. Process and redirect to webhook
+    // Process and redirect to webhook
     try {
         const { script, player, placeId, placeName, assetId } = req.body;
         
@@ -145,50 +181,24 @@ app.post('/send/scriptlogs', async (req, res) => {
     }
 });
 
-// Helper functions
-function getTierBadge(tier) {
-    const badges = {
-        'Owner': '👑',
-        'Ultimate': '💎',
-        'Premium': '⭐',
-        'Standard': '🔹'
-    };
-    return badges[tier] || '❔';
-}
+// Handle GET requests to /send/scriptlogs with proper error
+app.get('/send/scriptlogs', (req, res) => {
+    res.status(405).json({
+        status: 'error',
+        code: 'METHOD_NOT_ALLOWED',
+        message: 'This endpoint only accepts POST requests',
+        suggestion: 'Please check your request method and try again'
+    });
+});
 
-function createEmbed(script, player, placeId, placeName, assetId) {
-    const description = `
-👤 **User Info**
-**Username:** ${player.username}
-**Discord:** <@${player.discordId}>
-**ID:** ${player.userId}
-**Whitelist Tier:** ${player.tier}
-
-🕹 **Game Info**
-**Name:** ${placeName || 'Unknown'}
-**Place ID:** ${placeId || 'N/A'}
-
-📜 **Script Content**
-\`\`\`lua
-${script.substring(0, 1000)}${script.length > 1000 ? '... (truncated)' : ''}
-\`\`\`
-${assetId ? `📥 **Download Link:** [Click Here](https://assetdelivery.roblox.com/v1/asset/?id=${assetId})` : ''}
-    `;
-
-    return {
-        embeds: [{
-            title: '📄 Script Execution Log',
-            description: description,
-            color: 0x3498db,
-            footer: { text: 'Lua Script Logging System' },
-            timestamp: new Date().toISOString()
-        }]
-    };
-}
-
-function generateLogId() {
-    return crypto.randomBytes(8).toString('hex');
-}
+// Basic route to show API is running
+app.get('/status', (req, res) => {
+    res.json({
+        status: 'online',
+        version: '1.0.0',
+        timestamp: new Date().toISOString()
+    });
+});
 
 // Start server
 app.listen(PORT, () => {
