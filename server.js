@@ -45,16 +45,23 @@ setInterval(updateRobloxIPs, 3600000); // Atualiza a cada hora
 // Middleware para verificar IP do Roblox
 app.use((req, res, next) => {
     const clientIP = req.ip || req.connection.remoteAddress;
+    const cleanedIP = clientIP.replace('::ffff:', '');
     
-    // Verifica se é um IP do Roblox ou uma rota de verificação
-    if (req.path.startsWith('/verify/') || 
-        req.method === 'GET' || 
-        ALLOWED_IPS.includes(clientIP.replace('::ffff:', ''))) {
+    // Permite requisições GET e rotas de verificação
+    if (req.path.startsWith('/verify/') || req.method === 'GET') {
         return next();
     }
     
-    // Redireciona para o vídeo do Rick Astley se não for permitido
-    res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    // Verifica se é um IP do Roblox
+    if (ALLOWED_IPS.includes(cleanedIP)) {
+        return next();
+    }
+    
+    // Bloqueia requisições não autorizadas
+    res.status(403).json({
+        status: 'error',
+        message: 'Access forbidden - IP not authorized'
+    });
 });
 
 // Simplified username verification endpoint
