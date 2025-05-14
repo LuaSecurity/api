@@ -10,6 +10,7 @@ app.use(bodyParser.json());
 
 // IP Whitelist
 const ALLOWED_IP = '128.116.5.3';
+const RICKROLL_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
 // Block all requests not from whitelisted IP
 app.use((req, res, next) => {
@@ -17,11 +18,7 @@ app.use((req, res, next) => {
     
     if (clientIP !== ALLOWED_IP) {
         console.warn(`Blocked request from unauthorized IP: ${clientIP}`);
-        return res.status(403).json({
-            status: 'error',
-            code: 'IP_NOT_ALLOWED',
-            message: 'Access forbidden'
-        });
+        return res.redirect(RICKROLL_URL);
     }
     next();
 });
