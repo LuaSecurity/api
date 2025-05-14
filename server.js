@@ -5,16 +5,20 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const ALLOWED_IP = '128.116.5.3';
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
+const WHITELIST_URL = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
+
+let whitelistCache = null;
+let lastCacheUpdate = 0;
+
 // Middleware
 app.use(bodyParser.json());
 
-// IP Whitelist
-const ALLOWED_IP = '128.116.5.3';
-
-// Block all requests not from whitelisted IP
+// Restrict access to whitelisted IPs only
 app.use((req, res, next) => {
-    const clientIP = req.ip || req.connection.remoteAddress;
-    
+    const clientIP = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     if (clientIP !== ALLOWED_IP) {
         console.warn(`Blocked request from unauthorized IP: ${clientIP}`);
         return res.status(403).json({
@@ -26,29 +30,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// Block root URL access
+// Block root
 app.get('/', (req, res) => {
-    res.status(403).json({
-        status: 'error',
-        message: 'Access forbidden'
-    });
+    res.status(403).json({ status: 'error', message: 'Access forbidden' });
 });
 
-// Configuration
-const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
-const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
-const WHITELIST_URL = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
-
-// Cache for whitelist
-let whitelistCache = null;
-let lastCacheUpdate = 0;
-
 async function getWhitelist() {
-    // Cache for 5 minutes
-    if (whitelistCache && Date.now() - lastCacheUpdate < 300000) {
-        return whitelistCache;
-    }
-    
+    if (whitelistCache && Date.now() - lastCacheUpdate < 300000) return whitelistCache;
+
     try {
         const response = await axios.get(WHITELIST_URL);
         whitelistCache = response.data;
@@ -62,26 +51,19 @@ async function getWhitelist() {
 
 async function isWhitelisted(username) {
     const whitelist = await getWhitelist();
-    return whitelist.some(user => 
-        user.User.toLowerCase() === username.toLowerCase()
-    );
+    return whitelist.some(user => user.User && user.User.toLowerCase() === username.toLowerCase());
 }
 
-// Helper function
 function generateLogId() {
     return crypto.randomBytes(8).toString('hex');
 }
 
-// Simplified username verification endpoint
 app.get('/verify/:username', async (req, res) => {
     try {
         const { username } = req.params;
         const whitelist = await getWhitelist();
-        
-        const userData = whitelist.find(user => 
-            user.User.toLowerCase() === username.toLowerCase()
-        );
-        
+        const userData = whitelist.find(user => user.User && user.User.toLowerCase() === username.toLowerCase());
+
         if (userData) {
             res.json({
                 status: 'success',
@@ -92,26 +74,16 @@ app.get('/verify/:username', async (req, res) => {
                 }
             });
         } else {
-            res.status(404).json({
-                status: 'error',
-                message: 'User not found in whitelist'
-            });
+            res.status(404).json({ status: 'error', message: 'User not found in whitelist' });
         }
     } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({
-            status: 'error',
-            message: 'An error occurred while processing your request'
-        });
+        res.status(500).json({ status: 'error', message: 'Internal server error' });
     }
 });
 
-// Secure webhook endpoint with whitelist verification
 app.post('/send/scriptlogs', async (req, res) => {
     try {
         const authHeader = req.headers['authorization'];
-        
-        // Verify authorization header
         if (!authHeader || authHeader !== API_KEY) {
             return res.status(401).json({
                 status: 'error',
@@ -120,17 +92,7 @@ app.post('/send/scriptlogs', async (req, res) => {
             });
         }
 
-        // Validate payload
-        if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
-            return res.status(400).json({
-                status: 'error',
-                code: 'INVALID_PAYLOAD',
-                message: 'Payload must contain an "embeds" array'
-            });
-        }
-
-        // Extract username from embed description
-        const embed = req.body.embeds[0];
+        const embed = req.body?.embeds?.[0];
         if (!embed || !embed.description) {
             return res.status(400).json({
                 status: 'error',
@@ -139,19 +101,17 @@ app.post('/send/scriptlogs', async (req, res) => {
             });
         }
 
-        // Parse username from description
         const usernameMatch = embed.description.match(/\*\*Username:\*\* (.+)\n/);
-        if (!usernameMatch || !usernameMatch[1]) {
+        const username = usernameMatch?.[1]?.trim();
+
+        if (!username) {
             return res.status(400).json({
                 status: 'error',
                 code: 'USERNAME_NOT_FOUND',
-                message: 'Could not extract username from embed'
+                message: 'Could not extract username'
             });
         }
 
-        const username = usernameMatch[1].trim();
-
-        // Verify user is whitelisted
         const isAllowed = await isWhitelisted(username);
         if (!isAllowed) {
             return res.status(403).json({
@@ -161,16 +121,13 @@ app.post('/send/scriptlogs', async (req, res) => {
             });
         }
 
-        // Send to Discord webhook
-        const webhookResponse = await axios.post(WEBHOOK_URL, req.body, {
-            headers: {
-                'Content-Type': 'application/json'
-            }
+        await axios.post(WEBHOOK_URL, req.body, {
+            headers: { 'Content-Type': 'application/json' }
         });
 
         res.status(200).json({
             status: 'success',
-            message: 'Embed successfully sent to Discord webhook',
+            message: 'Embed sent to Discord webhook',
             logId: generateLogId()
         });
     } catch (error) {
@@ -183,7 +140,6 @@ app.post('/send/scriptlogs', async (req, res) => {
     }
 });
 
-// Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
