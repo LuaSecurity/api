@@ -1,1 +1,113 @@
-const _0x5e24bb=_0x1119;function _0x1119(_0x54f18d,_0x3c3aac){const _0x2c922a=_0x2c92();return _0x1119=function(_0x111906,_0x4196f6){_0x111906=_0x111906-0x19d;let _0x299668=_0x2c922a[_0x111906];return _0x299668;},_0x1119(_0x54f18d,_0x3c3aac);}(function(_0x475a3b,_0x44a215){const _0x51492d=_0x1119,_0x3bcb7c=_0x475a3b();while(!![]){try{const _0x2659f7=parseInt(_0x51492d(0x1bc))/0x1+parseInt(_0x51492d(0x1b5))/0x2+parseInt(_0x51492d(0x19e))/0x3+parseInt(_0x51492d(0x1ba))/0x4+parseInt(_0x51492d(0x1c1))/0x5*(-parseInt(_0x51492d(0x1b6))/0x6)+parseInt(_0x51492d(0x1a5))/0x7+-parseInt(_0x51492d(0x1c8))/0x8;if(_0x2659f7===_0x44a215)break;else _0x3bcb7c['push'](_0x3bcb7c['shift']());}catch(_0x356b22){_0x3bcb7c['push'](_0x3bcb7c['shift']());}}}(_0x2c92,0x768d8));const express=require(_0x5e24bb(0x1b9)),axios=require('axios'),bodyParser=require(_0x5e24bb(0x1b7)),crypto=require('crypto'),app=express(),PORT=process['env']['PORT']||0xbb8;app[_0x5e24bb(0x1a8)](bodyParser[_0x5e24bb(0x1b4)]()),app[_0x5e24bb(0x1c9)]('/',(_0x4a7b77,_0x5ed9ae)=>{const _0x462da8=_0x5e24bb;_0x5ed9ae[_0x462da8(0x1b2)](0x193)[_0x462da8(0x1b4)]({'status':_0x462da8(0x1ce),'message':_0x462da8(0x1c3)});});const WEBHOOK_URL='',API_KEY=process[_0x5e24bb(0x1a4)][_0x5e24bb(0x1c0)]||'';function _0x2c92(){const _0x1ac66e=['params','128056QtrBmi','listen','user-agent','Something\x20went\x20wrong:','API_KEY','74570ObmKYD','success','Sorry,\x20you\x20cant\x20access\x20this\x20page\x20directly','Roblox','/verify/:username','includes','Everything\x27s\x20ready\x20on\x20port\x20','5212544WKoHkJ','get','username','hex','catch','find','error','toString','/send/scriptlogs','1142364eqiGgs','post','User','headers','INVALID_PAYLOAD','randomBytes','env','319515MSxRiP','UNAUTHORIZED','toLowerCase','use','application/json','WEBHOOK_FAILED','body','We\x20hit\x20a\x20snag\x20while\x20processing\x20your\x20request','authorization','then','Couldn\x27t\x20find\x20that\x20user\x20in\x20our\x20system','Access\x20denied:\x20this\x20endpoint\x20is\x20only\x20available\x20to\x20Roblox\x20clients','Discord','status','Your\x20message\x20was\x20delivered\x20to\x20Discord','json','1663862tyiWbE','234JUmUCI','body-parser','Whitelist','express','1329544prYxXY'];_0x2c92=function(){return _0x1ac66e;};return _0x2c92();}function generateLogId(){const _0x43ae23=_0x5e24bb;return crypto[_0x43ae23(0x1a3)](0x8)[_0x43ae23(0x1cf)](_0x43ae23(0x1cb));}function isFromRoblox(_0x3ecbb5){const _0x155df9=_0x5e24bb,_0x3e2193=_0x3ecbb5[_0x155df9(0x1a1)][_0x155df9(0x1be)]||'';return _0x3e2193[_0x155df9(0x1c6)](_0x155df9(0x1c4));}app[_0x5e24bb(0x1c9)](_0x5e24bb(0x1c5),async(_0xd137a7,_0x283b7d)=>{const _0x2d5965=_0x5e24bb;if(!isFromRoblox(_0xd137a7))return _0x283b7d[_0x2d5965(0x1b2)](0x193)['json']({'status':_0x2d5965(0x1ce),'message':_0x2d5965(0x1b0)});try{const _0x42eff8=_0xd137a7[_0x2d5965(0x1bb)][_0x2d5965(0x1ca)],_0x2e62a4='https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json',_0x5c0b10=await axios[_0x2d5965(0x1c9)](_0x2e62a4),_0x51a643=_0x5c0b10['data'],_0x18efd7=_0x51a643[_0x2d5965(0x1cd)](_0x1341f2=>_0x1341f2[_0x2d5965(0x1a0)]['toLowerCase']()===_0x42eff8[_0x2d5965(0x1a7)]());_0x18efd7?_0x283b7d[_0x2d5965(0x1b4)]({'status':'success','data':{'username':_0x18efd7[_0x2d5965(0x1a0)],'discordId':_0x18efd7[_0x2d5965(0x1b1)],'tier':_0x18efd7[_0x2d5965(0x1b8)]}}):_0x283b7d[_0x2d5965(0x1b2)](0x194)[_0x2d5965(0x1b4)]({'status':_0x2d5965(0x1ce),'message':_0x2d5965(0x1af)});}catch(_0x46ed9c){console['error'](_0x2d5965(0x1bf),_0x46ed9c),_0x283b7d[_0x2d5965(0x1b2)](0x1f4)[_0x2d5965(0x1b4)]({'status':_0x2d5965(0x1ce),'message':_0x2d5965(0x1ac)});}}),app[_0x5e24bb(0x19f)](_0x5e24bb(0x19d),(_0x33be13,_0x99611e)=>{const _0x390540=_0x5e24bb;if(!isFromRoblox(_0x33be13))return _0x99611e[_0x390540(0x1b2)](0x193)[_0x390540(0x1b4)]({'status':_0x390540(0x1ce),'message':_0x390540(0x1b0)});const _0x2d1dfe=_0x33be13[_0x390540(0x1a1)][_0x390540(0x1ad)];if(!_0x2d1dfe||_0x2d1dfe!==API_KEY)return _0x99611e['status'](0x191)[_0x390540(0x1b4)]({'status':_0x390540(0x1ce),'code':_0x390540(0x1a6),'message':'You\x20need\x20a\x20valid\x20key\x20to\x20access\x20this'});if(!_0x33be13[_0x390540(0x1ab)]||!_0x33be13[_0x390540(0x1ab)]['embeds']||!Array['isArray'](_0x33be13[_0x390540(0x1ab)]['embeds']))return _0x99611e[_0x390540(0x1b2)](0x190)[_0x390540(0x1b4)]({'status':'error','code':_0x390540(0x1a2),'message':'Your\x20data\x20needs\x20to\x20include\x20proper\x20embed\x20information'});axios[_0x390540(0x19f)](WEBHOOK_URL,_0x33be13['body'],{'headers':{'Content-Type':_0x390540(0x1a9)}})[_0x390540(0x1ae)](()=>{const _0x3af232=_0x390540;_0x99611e[_0x3af232(0x1b2)](0xc8)[_0x3af232(0x1b4)]({'status':_0x3af232(0x1c2),'message':_0x3af232(0x1b3),'logId':generateLogId()});})[_0x390540(0x1cc)](_0x2a068e=>{const _0x5843aa=_0x390540;console[_0x5843aa(0x1ce)]('Failed\x20to\x20send:',_0x2a068e),_0x99611e[_0x5843aa(0x1b2)](0x1f4)['json']({'status':_0x5843aa(0x1ce),'code':_0x5843aa(0x1aa),'message':'We\x20couldn\x27t\x20send\x20your\x20message\x20through'});});}),app[_0x5e24bb(0x1bd)](PORT,()=>{const _0x56b07d=_0x5e24bb;console['log'](_0x56b07d(0x1c7)+PORT);});
+const express = require('express');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const crypto = require('crypto');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(bodyParser.json());
+
+// Block root URL access
+app.get('/', (req, res) => {
+    res.status(403).json({
+        status: 'error',
+        message: 'Access forbidden'
+    });
+});
+
+// Configuration
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
+
+// Helper function
+function generateLogId() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
+// Simplified username verification endpoint
+app.get('/verify/:username', async (req, res) => {
+    try {
+        const { username } = req.params;
+        const githubUrl = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
+        
+        const response = await axios.get(githubUrl);
+        const users = response.data;
+        
+        const userData = users.find(user => 
+            user.User.toLowerCase() === username.toLowerCase()
+        );
+        
+        if (userData) {
+            res.json({
+                status: 'success',
+                data: {
+                    username: userData.User,
+                    discordId: userData.Discord,
+                    tier: userData.Whitelist
+                }
+            });
+        } else {
+            res.status(404).json({
+                status: 'error',
+                message: 'User not found in whitelist'
+            });
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'An error occurred while processing your request'
+        });
+    }
+});
+
+// Secure webhook endpoint that only accepts embeds
+app.post('/send/scriptlogs', (req, res) => {
+    const authHeader = req.headers['authorization'];
+    
+    // Verify authorization header
+    if (!authHeader || authHeader !== API_KEY) {
+        return res.status(401).json({
+            status: 'error',
+            code: 'UNAUTHORIZED',
+            message: 'Invalid or missing API key'
+        });
+    }
+
+    // Validate payload - must contain embeds array
+    if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'INVALID_PAYLOAD',
+            message: 'Payload must contain an "embeds" array'
+        });
+    }
+
+    // Send to Discord webhook
+    axios.post(WEBHOOK_URL, req.body, {
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(webhookResponse => {
+        res.status(200).json({
+            status: 'success',
+            message: 'Embed successfully sent to Discord webhook',
+            logId: generateLogId()
+        });
+    })
+    .catch(error => {
+        console.error('Webhook error:', error);
+        res.status(500).json({
+            status: 'error',
+            code: 'WEBHOOK_FAILED',
+            message: 'Failed to send to webhook'
+        });
+    });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
