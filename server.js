@@ -8,24 +8,6 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(bodyParser.json());
 
-// IP Whitelist
-const ALLOWED_IP = '128.116.32.3';
-
-// Block all requests not from whitelisted IP
-app.use((req, res, next) => {
-    const clientIP = req.ip || req.connection.remoteAddress;
-    
-    if (clientIP !== ALLOWED_IP) {
-        console.warn(`Blocked request from unauthorized IP: ${clientIP}`);
-        return res.status(403).json({
-            status: 'error',
-            code: 'IP_NOT_ALLOWED',
-            message: 'Access forbidden'
-        });
-    }
-    next();
-});
-
 // Block root URL access
 app.get('/', (req, res) => {
     res.status(403).json({
