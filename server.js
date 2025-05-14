@@ -37,6 +37,35 @@ app.get('/', (req, res) => {
 // Configuration
 const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
 const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
+const WHITELIST_URL = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
+
+// Cache for whitelist
+let whitelistCache = null;
+let lastCacheUpdate = 0;
+
+async function getWhitelist() {
+    // Cache for 5 minutes
+    if (whitelistCache && Date.now() - lastCacheUpdate < 300000) {
+        return whitelistCache;
+    }
+    
+    try {
+        const response = await axios.get(WHITELIST_URL);
+        whitelistCache = response.data;
+        lastCacheUpdate = Date.now();
+        return whitelistCache;
+    } catch (error) {
+        console.error('Failed to fetch whitelist:', error);
+        throw new Error('Could not fetch whitelist');
+    }
+}
+
+async function isWhitelisted(username) {
+    const whitelist = await getWhitelist();
+    return whitelist.some(user => 
+        user.User.toLowerCase() === username.toLowerCase()
+    );
+}
 
 // Helper function
 function generateLogId() {
@@ -47,12 +76,9 @@ function generateLogId() {
 app.get('/verify/:username', async (req, res) => {
     try {
         const { username } = req.params;
-        const githubUrl = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
+        const whitelist = await getWhitelist();
         
-        const response = await axios.get(githubUrl);
-        const users = response.data;
-        
-        const userData = users.find(user => 
+        const userData = whitelist.find(user => 
             user.User.toLowerCase() === username.toLowerCase()
         );
         
@@ -80,49 +106,81 @@ app.get('/verify/:username', async (req, res) => {
     }
 });
 
-// Secure webhook endpoint that only accepts embeds
-app.post('/send/scriptlogs', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    
-    // Verify authorization header
-    if (!authHeader || authHeader !== API_KEY) {
-        return res.status(401).json({
-            status: 'error',
-            code: 'UNAUTHORIZED',
-            message: 'Invalid or missing API key'
-        });
-    }
-
-    // Validate payload - must contain embeds array
-    if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
-        return res.status(400).json({
-            status: 'error',
-            code: 'INVALID_PAYLOAD',
-            message: 'Payload must contain an "embeds" array'
-        });
-    }
-
-    // Send to Discord webhook
-    axios.post(WEBHOOK_URL, req.body, {
-        headers: {
-            'Content-Type': 'application/json'
+// Secure webhook endpoint with whitelist verification
+app.post('/send/scriptlogs', async (req, res) => {
+    try {
+        const authHeader = req.headers['authorization'];
+        
+        // Verify authorization header
+        if (!authHeader || authHeader !== API_KEY) {
+            return res.status(401).json({
+                status: 'error',
+                code: 'UNAUTHORIZED',
+                message: 'Invalid or missing API key'
+            });
         }
-    })
-    .then(webhookResponse => {
+
+        // Validate payload
+        if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'INVALID_PAYLOAD',
+                message: 'Payload must contain an "embeds" array'
+            });
+        }
+
+        // Extract username from embed description
+        const embed = req.body.embeds[0];
+        if (!embed || !embed.description) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'INVALID_EMBED',
+                message: 'Embed must contain a description'
+            });
+        }
+
+        // Parse username from description
+        const usernameMatch = embed.description.match(/\*\*Username:\*\* (.+)\n/);
+        if (!usernameMatch || !usernameMatch[1]) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'USERNAME_NOT_FOUND',
+                message: 'Could not extract username from embed'
+            });
+        }
+
+        const username = usernameMatch[1].trim();
+
+        // Verify user is whitelisted
+        const isAllowed = await isWhitelisted(username);
+        if (!isAllowed) {
+            return res.status(403).json({
+                status: 'error',
+                code: 'NOT_WHITELISTED',
+                message: 'User is not whitelisted'
+            });
+        }
+
+        // Send to Discord webhook
+        const webhookResponse = await axios.post(WEBHOOK_URL, req.body, {
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
         res.status(200).json({
             status: 'success',
             message: 'Embed successfully sent to Discord webhook',
             logId: generateLogId()
         });
-    })
-    .catch(error => {
-        console.error('Webhook error:', error);
+    } catch (error) {
+        console.error('Error:', error);
         res.status(500).json({
             status: 'error',
-            code: 'WEBHOOK_FAILED',
-            message: 'Failed to send to webhook'
+            code: 'SERVER_ERROR',
+            message: 'An error occurred while processing your request'
         });
-    });
+    }
 });
 
 // Start server
