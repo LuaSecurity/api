@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 
 // IP Whitelist
-const ALLOWED_IP = '128.116.5.3';
+const ALLOWED_IP = '128.116.32.3';
 
 // Block all requests not from whitelisted IP
 app.use((req, res, next) => {
