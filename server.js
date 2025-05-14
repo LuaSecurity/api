@@ -5,109 +5,163 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(bodyParser.json());
 
-// Block root URL access
 app.get('/', (req, res) => {
     res.status(403).json({
         status: 'error',
-        message: 'Access forbidden'
+        message: 'Sorry, you cant access this page directly'
     });
 });
 
-// Configuration
-const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const SCRIPT_LOGS_WEBHOOK = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const MODULE_ERRORS_WEBHOOK = 'https://discord.com/api/webhooks/1369470300982349915/2KOgeVUiifMv2-KYV5KctL4nEstNJTKmoGUbB3SP1QJxqtrcLcs8k-tYzAkhtXtD30t3';
 const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
 
-// Helper function
 function generateLogId() {
     return crypto.randomBytes(8).toString('hex');
 }
 
-// Simplified username verification endpoint
+function isFromRoblox(req) {
+    const userAgent = req.headers['user-agent'] || '';
+    return userAgent.includes('Roblox');
+}
+
+function verifyRequest(req, res) {
+    if (!isFromRoblox(req)) {
+        res.status(403).json({
+            status: 'error',
+            message: 'Access denied: this endpoint is only available to Roblox clients'
+        });
+        return false;
+    }
+
+    const authKey = req.headers['authorization'];
+    if (!authKey || authKey !== API_KEY) {
+        res.status(401).json({
+            status: 'error',
+            code: 'UNAUTHORIZED',
+            message: 'You need a valid key to access this'
+        });
+        return false;
+    }
+
+    return true;
+}
+
 app.get('/verify/:username', async (req, res) => {
+    if (!verifyRequest(req, res)) return;
+
     try {
-        const { username } = req.params;
+        const username = req.params.username;
         const githubUrl = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
         
         const response = await axios.get(githubUrl);
         const users = response.data;
-        
-        const userData = users.find(user => 
+
+        const foundUser = users.find(user => 
             user.User.toLowerCase() === username.toLowerCase()
         );
         
-        if (userData) {
+        if (foundUser) {
             res.json({
                 status: 'success',
                 data: {
-                    username: userData.User,
-                    discordId: userData.Discord,
-                    tier: userData.Whitelist
+                    username: foundUser.User,
+                    discordId: foundUser.Discord,
+                    tier: foundUser.Whitelist
                 }
             });
         } else {
             res.status(404).json({
                 status: 'error',
-                message: 'User not found in whitelist'
+                message: "Couldn't find that user in our system"
             });
         }
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Something went wrong:', error);
         res.status(500).json({
             status: 'error',
-            message: 'An error occurred while processing your request'
+            message: "We hit a snag while processing your request"
         });
     }
 });
 
-// Secure webhook endpoint that only accepts embeds
 app.post('/send/scriptlogs', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    
-    // Verify authorization header
-    if (!authHeader || authHeader !== API_KEY) {
-        return res.status(401).json({
-            status: 'error',
-            code: 'UNAUTHORIZED',
-            message: 'Invalid or missing API key'
-        });
-    }
+    if (!verifyRequest(req, res)) return;
 
-    // Validate payload - must contain embeds array
     if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
         return res.status(400).json({
             status: 'error',
             code: 'INVALID_PAYLOAD',
-            message: 'Payload must contain an "embeds" array'
+            message: 'Your data needs to include proper embed information'
         });
     }
 
-    // Send to Discord webhook
-    axios.post(WEBHOOK_URL, req.body, {
+    axios.post(SCRIPT_LOGS_WEBHOOK, req.body, {
         headers: {
             'Content-Type': 'application/json'
         }
     })
-    .then(webhookResponse => {
+    .then(() => {
         res.status(200).json({
             status: 'success',
-            message: 'Embed successfully sent to Discord webhook',
+            message: 'Your script logs were delivered to Discord',
             logId: generateLogId()
         });
     })
     .catch(error => {
-        console.error('Webhook error:', error);
+        console.error('Failed to send script logs:', error);
         res.status(500).json({
             status: 'error',
             code: 'WEBHOOK_FAILED',
-            message: 'Failed to send to webhook'
+            message: "We couldn't send your script logs through"
         });
     });
 });
 
-// Start server
+app.post('/send/module-errors', (req, res) => {
+    if (!verifyRequest(req, res)) return;
+
+    if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'INVALID_PAYLOAD',
+            message: 'Your error report needs to include proper embed information'
+        });
+    }
+
+    // Add additional error-specific validation if needed
+    if (!req.body.module_name || !req.body.error_details) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'MISSING_ERROR_INFO',
+            message: 'Module error reports require module_name and error_details'
+        });
+    }
+
+    axios.post(MODULE_ERRORS_WEBHOOK, req.body, {
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(() => {
+        res.status(200).json({
+            status: 'success',
+            message: 'Your module error report was delivered',
+            logId: generateLogId()
+        });
+    })
+    .catch(error => {
+        console.error('Failed to send module error:', error);
+        res.status(500).json({
+            status: 'error',
+            code: 'WEBHOOK_FAILED',
+            message: "We couldn't send your error report"
+        });
+    });
+});
+
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Everything's ready on port ${PORT}`);
 });
