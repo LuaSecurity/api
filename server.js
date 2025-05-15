@@ -5,8 +5,24 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Constants
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
+
+// Middleware
 app.use(bodyParser.json());
 
+// Helper functions
+function generateLogId() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
+function isFromRoblox(req) {
+    const userAgent = req.headers['user-agent'] || '';
+    return userAgent.includes('Roblox');
+}
+
+// Routes
 app.get('/', (req, res) => {
     res.status(403).json({
         status: 'error',
@@ -14,21 +30,6 @@ app.get('/', (req, res) => {
     });
 });
 
-const WEBHOOK_URL = '';
-const API_KEY = process.env.API_KEY || '';
-
-// Function to generate random log ID
-function generateLogId() {
-    return crypto.randomBytes(8).toString('hex');
-}
-
-// Middleware to check if request is from Roblox
-function isFromRoblox(req) {
-    const userAgent = req.headers['user-agent'] || '';
-    return userAgent.includes('Roblox');
-}
-
-// Verify user endpoint
 app.get('/verify/:username', async (req, res) => {
     if (!isFromRoblox(req)) {
         return res.status(403).json({
@@ -72,7 +73,6 @@ app.get('/verify/:username', async (req, res) => {
     }
 });
 
-// Script logs endpoint
 app.post('/send/scriptlogs', (req, res) => {
     if (!isFromRoblox(req)) {
         return res.status(403).json({
@@ -120,7 +120,7 @@ app.post('/send/scriptlogs', (req, res) => {
         });
     });
 });
-// Adicione esta rota após as outras rotas existentes
+
 app.get('/scripts/LuaMenu', async (req, res) => {
     if (!isFromRoblox(req)) {
         return res.status(403).json({
@@ -130,7 +130,6 @@ app.get('/scripts/LuaMenu', async (req, res) => {
     }
 
     try {
-        // Verificar se a requisição parece vir de um exploit (loadstring)
         const referer = req.headers['referer'] || '';
         const isLikelyExploit = referer.includes('RobloxPlayer') || 
                               req.headers['user-agent'].includes('Roblox') ||
@@ -143,17 +142,14 @@ app.get('/scripts/LuaMenu', async (req, res) => {
             });
         }
 
-        // Buscar o conteúdo do script do GitHub
         const response = await axios.get('https://raw.githubusercontent.com/LuaSecurity/ergsergesrgegresrgsregredf/refs/heads/main/gbfddfgesge');
         
-        // Definir headers para evitar cache e indicar conteúdo como texto puro
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         
-        // Enviar o conteúdo do script
         res.send(response.data);
     } catch (error) {
         console.error('Failed to fetch script:', error);
@@ -163,6 +159,8 @@ app.get('/scripts/LuaMenu', async (req, res) => {
         });
     }
 });
+
+// Start server
 app.listen(PORT, () => {
-    console.log(`Everything's ready on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
