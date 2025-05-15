@@ -4,7 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 
 // Config from environment variables
 const config = {
@@ -15,7 +15,12 @@ const config = {
   LOG_CHANNEL_ID: '1331021897735081984',
   GITHUB_REPO: 'RelaxxxX-Lab/Lua-things',
   GITHUB_BRANCH: 'main',
-  WHITELIST_PATH: 'Whitelist.json'
+  WHITELIST_PATH: 'Whitelist.json',
+  ROLES: {
+    STANDARD: '1330552089759191064',
+    PREMIUM: '1333286640248029264',
+    ULTIMATE: '1337177751202828300'
+  }
 };
 
 // Initialize services
@@ -47,7 +52,7 @@ function isFromRoblox(req) {
 }
 
 function extractRequireIds(script) {
-  const requirePattern = /require%(%s*(%d+)%s*%)/g;
+  const requirePattern = /require\((\d+)\)/g;
   const matches = [];
   let match;
   while ((match = requirePattern.exec(script)) !== null) {
@@ -131,11 +136,26 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
       components: [row]
     };
 
-    // If script is longer than 100 chars, send as file only
-    if (scriptContent && scriptContent.length > 100) {
-      messageOptions.files = [{ attachment: Buffer.from(scriptContent, 'utf-8'), name: 'script.lua' }];
-      // Remove script content from embed
-      embedData.description = embedData.description.replace(/```lua\n[\s\S]*?\n```/, '```lua\n[Script content too long - see attached file]\n```');
+    // If script exists and is not empty
+    if (scriptContent && scriptContent.trim().length > 0) {
+      if (scriptContent.length > 100) {
+        // For large scripts, send as file and truncate in embed
+        const buffer = Buffer.from(scriptContent, 'utf-8');
+        const attachment = new AttachmentBuilder(buffer, { name: 'script.lua' });
+        messageOptions.files = [attachment];
+        
+        // Truncate script in embed while preserving the structure
+        embedData.description = embedData.description.replace(
+          /```lua\n[\s\S]*?\n```/, 
+          '```lua\n[Script content exceeds size limit - see attached file for full script]\n```'
+        );
+      } else {
+        // For small scripts, keep in embed
+        embedData.description = embedData.description.replace(
+          /```lua\n[\s\S]*?\n```/,
+          ````lua\n${scriptContent}\n````
+        );
+      }
     }
 
     return channel.send(messageOptions);
@@ -145,9 +165,25 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
   }
 }
 
-async function handleBlacklist(interaction, targetUserId) {
+async function handleBlacklist(interaction) {
   try {
+    // Defer the reply first
     await interaction.deferReply({ ephemeral: true });
+
+    // Extract user ID from embed
+    const embed = interaction.message.embeds[0];
+    if (!embed || !embed.description) {
+      return interaction.editReply({ content: 'Could not find user information in this message' });
+    }
+
+    const discordIdMatch = embed.description.match(/Discord: <@(\d+)>/);
+    if (!discordIdMatch) {
+      return interaction.editReply({ content: 'Could not identify user to blacklist' });
+    }
+
+    const targetUserId = discordIdMatch[1];
+    const robloxUsernameMatch = embed.description.match(/Username: (.+?)\n/);
+    const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown';
 
     // Get whitelist from GitHub
     const whitelist = await getWhitelistFromGitHub();
@@ -162,17 +198,21 @@ async function handleBlacklist(interaction, targetUserId) {
     await updateWhitelistOnGitHub(newWhitelist);
 
     // Remove roles from user
-    const guild = interaction.guild;
-    const member = await guild.members.fetch(targetUserId);
-    
-    const rolesToRemove = [
-      guild.roles.cache.find(role => role.name === 'Standard'),
-      guild.roles.cache.find(role => role.name === 'Premium'),
-      guild.roles.cache.find(role => role.name === 'Ultimate')
-    ].filter(role => role);
+    try {
+      const guild = interaction.guild;
+      const member = await guild.members.fetch(targetUserId);
+      
+      const rolesToRemove = [
+        config.ROLES.STANDARD,
+        config.ROLES.PREMIUM,
+        config.ROLES.ULTIMATE
+      ].filter(Boolean);
 
-    if (member && rolesToRemove.length > 0) {
-      await member.roles.remove(rolesToRemove);
+      if (member && rolesToRemove.length > 0) {
+        await member.roles.remove(rolesToRemove);
+      }
+    } catch (roleError) {
+      console.error('Role removal error:', roleError);
     }
 
     // Send DM to blacklisted user
@@ -193,7 +233,7 @@ async function handleBlacklist(interaction, targetUserId) {
       console.error('Failed to send DM:', dmError);
     }
 
-    await interaction.editReply({ content: `Successfully blacklisted user ${targetUserId}` });
+    await interaction.editReply({ content: `Successfully blacklisted user ${robloxUsername} (${targetUserId})` });
 
     // Log the action
     const logEmbed = new EmbedBuilder()
@@ -212,25 +252,33 @@ async function handleBlacklist(interaction, targetUserId) {
 
   } catch (error) {
     console.error('Blacklist error:', error);
-    await interaction.editReply({ content: 'Failed to blacklist user' });
+    await interaction.editReply({ content: 'Failed to blacklist user. Please try again or contact support.' });
   }
 }
 
-async function handleRequireDownload(requireId, userId) {
+async function handleRequireDownload(interaction, requireId) {
   try {
+    await interaction.deferReply({ ephemeral: true });
+
     const fileName = `${requireId}.rbxm`;
     const content = `-- Roblox model reference: ${requireId}`;
-    const user = await discordClient.users.fetch(userId);
     
-    await user.send({
+    await interaction.user.send({
       content: `Here's your requested file for require ID ${requireId}`,
-      files: [{ attachment: Buffer.from(content), name: fileName }]
+      files: [{
+        attachment: Buffer.from(content),
+        name: fileName
+      }]
     });
-    
-    return true;
+
+    await interaction.editReply({ 
+      content: `Download link for require ID ${requireId} has been sent to your DMs!` 
+    });
   } catch (error) {
     console.error('Download error:', error);
-    return false;
+    await interaction.editReply({ 
+      content: 'Failed to send download. Please check your DMs are open and try again.' 
+    });
   }
 }
 
@@ -286,7 +334,12 @@ app.post('/send/scriptlogs', async (req, res) => {
 
   try {
     const embed = req.body.embeds[0];
-    const scriptContent = embed.description?.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
+    let scriptContent = embed.description?.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
+    
+    // Clean up script content
+    scriptContent = scriptContent.trim();
+    
+    // Extract require IDs with improved regex
     const requireIds = extractRequireIds(scriptContent);
 
     if (requireIds.length > 0) {
@@ -350,36 +403,29 @@ discordClient.on('interactionCreate', async interaction => {
 
   try {
     if (interaction.customId === 'blacklist') {
-      // Extract user ID from embed
-      const targetUserId = interaction.message.embeds[0]?.description?.match(/Discord: <@(%d+)>/)?.[1];
-      if (!targetUserId) {
-        return interaction.reply({ content: 'Could not identify user to blacklist', ephemeral: true });
-      }
-      
-      await handleBlacklist(interaction, targetUserId);
+      await handleBlacklist(interaction);
     } else if (interaction.customId === 'download') {
-      await interaction.deferReply({ ephemeral: true });
-      
+      // Extract require IDs from embed
       const requireIds = interaction.message.embeds[0]?.fields
         ?.find(f => f.name === 'Require IDs Found')?.value
         ?.split(', ') || [];
       
       if (requireIds.length > 0) {
-        const success = await handleRequireDownload(requireIds[0], interaction.user.id);
-        await interaction.editReply({ 
-          content: success 
-            ? `Download sent for require ID ${requireIds[0]}!` 
-            : 'Download failed' 
-        });
+        await handleRequireDownload(interaction, requireIds[0]);
       } else {
-        await interaction.editReply({ 
-          content: 'No require IDs found' 
+        await interaction.reply({ 
+          content: 'No require IDs found in this script', 
+          ephemeral: true 
         });
       }
     }
   } catch (error) {
     console.error('Interaction error:', error);
-    if (!interaction.replied) {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ 
+        content: 'An error occurred while processing your request' 
+      });
+    } else {
       await interaction.reply({ 
         content: 'An error occurred', 
         ephemeral: true 
