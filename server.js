@@ -19,7 +19,10 @@ const config = {
 
 // Initialize services
 const app = express();
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
+const octokit = new Octokit({ 
+  auth: config.GITHUB_TOKEN,
+  request: { timeout: 5000 } // 5 second timeout
+});
 const discordClient = new Client({ 
   intents: [
     GatewayIntentBits.Guilds,
@@ -51,6 +54,42 @@ function extractRequireIds(script) {
   return matches;
 }
 
+async function getWhitelistFromGitHub() {
+  try {
+    const { data } = await octokit.rest.repos.getContent({
+      owner: config.GITHUB_REPO.split('/')[0],
+      repo: config.GITHUB_REPO.split('/')[1],
+      path: 'Whitelist.json',
+      ref: config.GITHUB_BRANCH,
+      headers: {
+        'Accept': 'application/vnd.github.v3.raw',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+
+    // If we get the raw content directly
+    if (typeof data === 'string') {
+      return JSON.parse(data);
+    }
+    
+    // If we get the encoded content
+    if (data.content) {
+      return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
+    }
+
+    throw new Error('Unexpected GitHub response format');
+  } catch (error) {
+    console.error('GitHub API Error:', error.message);
+    if (error.status === 404) {
+      throw new Error('Whitelist file not found in repository');
+    }
+    if (error.status === 403) {
+      throw new Error('GitHub API rate limit exceeded');
+    }
+    throw new Error('Failed to fetch whitelist from GitHub');
+  }
+}
+
 async function sendToDiscordChannel(embedData, scriptContent = null) {
   try {
     const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
@@ -68,19 +107,16 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
           .setStyle(ButtonStyle.Primary)
       );
 
-    if (scriptContent && scriptContent.length > 100) {
-      const buffer = Buffer.from(scriptContent, 'utf-8');
-      return channel.send({
-        embeds: [embedData],
-        files: [{ attachment: buffer, name: 'script.lua' }],
-        components: [row]
-      });
-    }
-    
-    return channel.send({
+    const messageOptions = {
       embeds: [embedData],
       components: [row]
-    });
+    };
+
+    if (scriptContent && scriptContent.length > 100) {
+      messageOptions.files = [{ attachment: Buffer.from(scriptContent, 'utf-8'), name: 'script.lua' }];
+    }
+
+    return channel.send(messageOptions);
   } catch (error) {
     console.error('Discord send error:', error);
     throw error;
@@ -116,33 +152,28 @@ app.get('/verify/:username', async (req, res) => {
   }
 
   try {
-    const { data } = await octokit.repos.getContent({
-      owner: config.GITHUB_REPO.split('/')[0],
-      repo: config.GITHUB_REPO.split('/')[1],
-      path: 'Whitelist.json',
-      ref: config.GITHUB_BRANCH
-    });
-
-    const content = Buffer.from(data.content, 'base64').toString('utf-8');
-    const users = JSON.parse(content);
+    const whitelist = await getWhitelistFromGitHub();
     const username = req.params.username.toLowerCase();
-    const foundUser = users.find(user => user.User.toLowerCase() === username);
+    const foundUser = whitelist.find(user => user.User.toLowerCase() === username);
 
-    if (foundUser) {
-      return res.json({
-        status: 'success',
-        data: {
-          username: foundUser.User,
-          discordId: foundUser.Discord,
-          tier: foundUser.Whitelist
-        }
-      });
+    if (!foundUser) {
+      return res.status(404).json({ status: 'error', message: "User not found" });
     }
 
-    res.status(404).json({ status: 'error', message: "User not found" });
+    res.json({
+      status: 'success',
+      data: {
+        username: foundUser.User,
+        discordId: foundUser.Discord,
+        tier: foundUser.Whitelist
+      }
+    });
   } catch (error) {
-    console.error('Verification error:', error);
-    res.status(500).json({ status: 'error', message: "Internal server error" });
+    console.error('Verification error:', error.message);
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message || "Internal server error" 
+    });
   }
 });
 
@@ -184,7 +215,10 @@ app.post('/send/scriptlogs', async (req, res) => {
     });
   } catch (error) {
     console.error('Script log error:', error);
-    res.status(500).json({ status: 'error', message: "Processing failed" });
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message || "Processing failed" 
+    });
   }
 });
 
@@ -194,7 +228,13 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   }
 
   try {
-    const response = await axios.get(config.GITHUB_LUA_MENU_URL);
+    const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'LuaWhitelistServer/1.0'
+      }
+    });
+    
     res.set({
       'Content-Type': 'text/plain',
       'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -203,8 +243,11 @@ app.get('/scripts/LuaMenu', async (req, res) => {
       'X-Content-Type-Options': 'nosniff'
     }).send(response.data);
   } catch (error) {
-    console.error('Script fetch error:', error);
-    res.status(500).json({ status: 'error', message: 'Failed to load script' });
+    console.error('Script fetch error:', error.message);
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message || 'Failed to load script' 
+    });
   }
 });
 
@@ -249,19 +292,25 @@ discordClient.on('interactionCreate', async interaction => {
   }
 });
 
+// Error handling
+process.on('unhandledRejection', error => {
+  console.error('Unhandled rejection:', error);
+});
+
+process.on('uncaughtException', error => {
+  console.error('Uncaught exception:', error);
+});
+
 // Start services
 discordClient.login(config.DISCORD_BOT_TOKEN)
   .then(() => {
     console.log('Discord bot connected successfully');
-    app.listen(process.env.PORT || 3000, () => {
-      console.log(`API server running on port ${process.env.PORT || 3000}`);
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => {
+      console.log(`API server running on port ${port}`);
     });
   })
   .catch(error => {
     console.error('Discord login failed:', error);
     process.exit(1);
   });
-
-process.on('unhandledRejection', error => {
-  console.error('Unhandled rejection:', error);
-});
