@@ -1,1 +1,313 @@
-const _0x57136c=_0x536b;(function(_0x1e046e,_0x2dcd1b){const _0x1c782a=_0x536b,_0x55b0fa=_0x1e046e();while(!![]){try{const _0x32cbd8=parseInt(_0x1c782a(0x1b7))/0x1*(parseInt(_0x1c782a(0x15f))/0x2)+-parseInt(_0x1c782a(0x1ba))/0x3+parseInt(_0x1c782a(0x1b2))/0x4*(-parseInt(_0x1c782a(0x17c))/0x5)+-parseInt(_0x1c782a(0x18e))/0x6*(-parseInt(_0x1c782a(0x199))/0x7)+-parseInt(_0x1c782a(0x1b6))/0x8+parseInt(_0x1c782a(0x162))/0x9+parseInt(_0x1c782a(0x15e))/0xa;if(_0x32cbd8===_0x2dcd1b)break;else _0x55b0fa['push'](_0x55b0fa['shift']());}catch(_0x38ab50){_0x55b0fa['push'](_0x55b0fa['shift']());}}}(_0x3a00,0x5e29d));const express=require('express'),axios=require(_0x57136c(0x154)),bodyParser=require(_0x57136c(0x189)),crypto=require(_0x57136c(0x196)),{Octokit}=require(_0x57136c(0x1ae)),app=express(),PORT=process[_0x57136c(0x159)]['PORT']||0xbb8,DISCORD_BOT_TOKEN='MTM3MDg1NjU5NTY2NzU1MDI0OA.GRG3k8._QYn6rg96GUyhwmp7BYWvGkpBl9i0QUcCKXa8k',LOG_CHANNEL_ID='1331021897735081984',API_KEY=process[_0x57136c(0x159)][_0x57136c(0x1a9)]||_0x57136c(0x19d),GITHUB_TOKEN=_0x57136c(0x1ac),GITHUB_REPO='RelaxxxX-Lab/Lua-things',GITHUB_BRANCH='main',octokit=new Octokit({'auth':GITHUB_TOKEN}),{Client,GatewayIntentBits}=require(_0x57136c(0x182)),discordClient=new Client({'intents':[GatewayIntentBits[_0x57136c(0x1b5)],GatewayIntentBits[_0x57136c(0x161)],GatewayIntentBits[_0x57136c(0x165)]]});discordClient['login'](DISCORD_BOT_TOKEN),discordClient['on'](_0x57136c(0x1b9),()=>console[_0x57136c(0x185)](_0x57136c(0x19c))),app['use'](bodyParser[_0x57136c(0x197)]({'limit':_0x57136c(0x1a0)}));function generateLogId(){const _0x3928a2=_0x57136c;return crypto[_0x3928a2(0x17b)](0x8)['toString'](_0x3928a2(0x1a4));}function isFromRoblox(_0x4a4946){const _0x33f530=_0x57136c,_0x57b2c0=_0x4a4946[_0x33f530(0x166)][_0x33f530(0x18b)]||'';return _0x57b2c0[_0x33f530(0x177)](_0x33f530(0x16d));}async function sendToDiscordChannel(_0x364ac4,_0x4f701a=null){const _0x4924d0=_0x57136c;try{const _0x4cc708=await discordClient[_0x4924d0(0x1c1)]['fetch'](LOG_CHANNEL_ID);if(!_0x4cc708)throw new Error(_0x4924d0(0x1b4));const {ActionRowBuilder:_0x14a5f2,ButtonBuilder:_0x4c823f,ButtonStyle:_0x542355}=require(_0x4924d0(0x182)),_0x9e1b3c=new _0x14a5f2()['addComponents'](new _0x4c823f()[_0x4924d0(0x190)](_0x4924d0(0x160))[_0x4924d0(0x179)]('Blacklist')[_0x4924d0(0x183)](_0x542355[_0x4924d0(0x17f)]),new _0x4c823f()['setCustomId']('download')[_0x4924d0(0x179)](_0x4924d0(0x1c2))[_0x4924d0(0x183)](_0x542355['Primary']));if(_0x4f701a&&_0x4f701a[_0x4924d0(0x170)]>0x64){const _0x2279e7=Buffer[_0x4924d0(0x163)](_0x4f701a,_0x4924d0(0x187));await _0x4cc708[_0x4924d0(0x169)]({'embeds':[_0x364ac4],'files':[{'attachment':_0x2279e7,'name':_0x4924d0(0x1bb)}],'components':[_0x9e1b3c]});}else await _0x4cc708[_0x4924d0(0x169)]({'embeds':[_0x364ac4],'components':[_0x9e1b3c]});}catch(_0x1d2fc1){console['error'](_0x4924d0(0x184),_0x1d2fc1);throw _0x1d2fc1;}}async function handleRequireDownload(_0x2e1f13,_0x492291){const _0x45cfaf=_0x57136c;try{const _0x5e7457=_0x2e1f13+_0x45cfaf(0x157),_0x550de5=_0x45cfaf(0x1aa)+_0x2e1f13,_0xda41de=await discordClient[_0x45cfaf(0x16e)][_0x45cfaf(0x198)](_0x492291);return await _0xda41de[_0x45cfaf(0x169)]({'content':_0x45cfaf(0x181)+_0x2e1f13,'files':[{'attachment':Buffer[_0x45cfaf(0x163)](_0x550de5),'name':_0x5e7457}]}),!![];}catch(_0x30a05d){return console[_0x45cfaf(0x174)](_0x45cfaf(0x155),_0x30a05d),![];}}function extractRequireIds(_0x1963f1){const _0x1cbbec=_0x57136c,_0x4a967e=/require%(%s*(%d+)%s*%)/g,_0x525c86=[];let _0x336c61;while((_0x336c61=_0x4a967e[_0x1cbbec(0x18a)](_0x1963f1))!==null){_0x525c86[_0x1cbbec(0x19a)](_0x336c61[0x1]);}return _0x525c86;}function _0x536b(_0xed7f7e,_0x85fda2){const _0x3a005c=_0x3a00();return _0x536b=function(_0x536be6,_0x35145f){_0x536be6=_0x536be6-0x154;let _0x1fea7e=_0x3a005c[_0x536be6];return _0x1fea7e;},_0x536b(_0xed7f7e,_0x85fda2);}app[_0x57136c(0x16b)]('/',(_0xc350f3,_0x17886b)=>{const _0x42458a=_0x57136c;_0x17886b[_0x42458a(0x180)](0x193)[_0x42458a(0x197)]({'status':_0x42458a(0x174),'message':'Access\x20denied'});}),app[_0x57136c(0x16b)](_0x57136c(0x158),async(_0x298b3b,_0x45a5c4)=>{const _0x2043d8=_0x57136c;if(!isFromRoblox(_0x298b3b))return _0x45a5c4['status'](0x193)['json']({'status':'error','message':_0x2043d8(0x167)});try{const {data:_0x5f4982}=await octokit['repos'][_0x2043d8(0x17a)]({'owner':GITHUB_REPO[_0x2043d8(0x16a)]('/')[0x0],'repo':GITHUB_REPO[_0x2043d8(0x16a)]('/')[0x1],'path':_0x2043d8(0x1b8),'ref':GITHUB_BRANCH}),_0x41fe08=Buffer[_0x2043d8(0x163)](_0x5f4982['content'],_0x2043d8(0x16f))[_0x2043d8(0x1be)]('utf-8'),_0x5557ff=JSON[_0x2043d8(0x18c)](_0x41fe08),_0x2952b6=_0x298b3b[_0x2043d8(0x194)]['username'][_0x2043d8(0x15b)](),_0x3f9a34=_0x5557ff[_0x2043d8(0x1c0)](_0x273e08=>_0x273e08[_0x2043d8(0x188)][_0x2043d8(0x15b)]()===_0x2952b6);_0x3f9a34?_0x45a5c4[_0x2043d8(0x197)]({'status':'success','data':{'username':_0x3f9a34['User'],'discordId':_0x3f9a34[_0x2043d8(0x17d)],'tier':_0x3f9a34[_0x2043d8(0x1a6)]}}):_0x45a5c4['status'](0x194)[_0x2043d8(0x197)]({'status':_0x2043d8(0x174),'message':_0x2043d8(0x1b3)});}catch(_0x77f9b1){console['error'](_0x2043d8(0x176),_0x77f9b1),_0x45a5c4['status'](0x1f4)[_0x2043d8(0x197)]({'status':_0x2043d8(0x174),'message':'Internal\x20server\x20error'});}}),app[_0x57136c(0x156)]('/send/scriptlogs',async(_0x4ea4c,_0xd6ee52)=>{const _0x47e9e7=_0x57136c;if(!isFromRoblox(_0x4ea4c))return _0xd6ee52[_0x47e9e7(0x180)](0x193)['json']({'status':'error','message':_0x47e9e7(0x167)});const _0x3a1bc8=_0x4ea4c[_0x47e9e7(0x166)][_0x47e9e7(0x1ad)];if(!_0x3a1bc8||_0x3a1bc8!==API_KEY)return _0xd6ee52[_0x47e9e7(0x180)](0x191)[_0x47e9e7(0x197)]({'status':'error','code':_0x47e9e7(0x1a8),'message':_0x47e9e7(0x1bc)});if(!_0x4ea4c['body']||!_0x4ea4c['body']['embeds']||!Array[_0x47e9e7(0x192)](_0x4ea4c['body'][_0x47e9e7(0x164)])||_0x4ea4c[_0x47e9e7(0x1bd)][_0x47e9e7(0x164)][_0x47e9e7(0x170)]===0x0)return _0xd6ee52[_0x47e9e7(0x180)](0x190)[_0x47e9e7(0x197)]({'status':_0x47e9e7(0x174),'code':_0x47e9e7(0x19e),'message':'Invalid\x20embed\x20data'});try{const _0x48b76e=_0x4ea4c[_0x47e9e7(0x1bd)][_0x47e9e7(0x164)][0x0],_0x5e244d=_0x48b76e['description'][_0x47e9e7(0x1a1)](/```lua\n([\s\S]*?)\n```/)?.[0x1]||'',_0x267770=extractRequireIds(_0x5e244d);_0x267770[_0x47e9e7(0x170)]>0x0&&(_0x48b76e[_0x47e9e7(0x15d)]=_0x48b76e[_0x47e9e7(0x15d)]||[],_0x48b76e[_0x47e9e7(0x15d)][_0x47e9e7(0x19a)]({'name':'Require\x20IDs\x20Found','value':_0x267770[_0x47e9e7(0x15a)](',\x20'),'inline':![]})),await sendToDiscordChannel(_0x48b76e,_0x5e244d),_0xd6ee52['status'](0xc8)['json']({'status':_0x47e9e7(0x186),'message':'Log\x20sent\x20to\x20Discord','logId':generateLogId(),'requireIds':_0x267770});}catch(_0x2b7c33){console[_0x47e9e7(0x174)](_0x47e9e7(0x17e),_0x2b7c33),_0xd6ee52[_0x47e9e7(0x180)](0x1f4)[_0x47e9e7(0x197)]({'status':_0x47e9e7(0x174),'code':'PROCESSING_ERROR','message':_0x47e9e7(0x15c)});}}),app[_0x57136c(0x16b)]('/scripts/LuaMenu',async(_0x5a84b2,_0x31dd8e)=>{const _0x93094a=_0x57136c;if(!isFromRoblox(_0x5a84b2))return _0x31dd8e['status'](0x193)[_0x93094a(0x197)]({'status':_0x93094a(0x174),'message':'Access\x20denied:\x20Roblox\x20clients\x20only'});try{const _0x38a904=await axios[_0x93094a(0x16b)](_0x93094a(0x178));_0x31dd8e[_0x93094a(0x1a5)]({'Content-Type':_0x93094a(0x173),'Cache-Control':'no-store,\x20no-cache,\x20must-revalidate,\x20proxy-revalidate','Pragma':_0x93094a(0x171),'Expires':'0','X-Content-Type-Options':_0x93094a(0x18d)}),_0x31dd8e['send'](_0x38a904[_0x93094a(0x191)]);}catch(_0x2da830){console[_0x93094a(0x174)](_0x93094a(0x18f),_0x2da830),_0x31dd8e[_0x93094a(0x180)](0x1f4)[_0x93094a(0x197)]({'status':_0x93094a(0x174),'message':_0x93094a(0x195)});}}),discordClient['on'](_0x57136c(0x1a3),async _0x13a779=>{const _0x217fd5=_0x57136c;if(!_0x13a779[_0x217fd5(0x193)]())return;try{if(_0x13a779[_0x217fd5(0x1a7)]===_0x217fd5(0x160))await _0x13a779['reply']({'content':_0x217fd5(0x1ab),'ephemeral':!![]});else{if(_0x13a779[_0x217fd5(0x1a7)]===_0x217fd5(0x1a2)){const _0x5e2e27=_0x13a779[_0x217fd5(0x1af)][_0x217fd5(0x164)][0x0]?.[_0x217fd5(0x15d)]?.['find'](_0x2a5d8a=>_0x2a5d8a['name']==='Require\x20IDs\x20Found')?.[_0x217fd5(0x16c)]?.[_0x217fd5(0x16a)](',\x20')||[];if(_0x5e2e27['length']>0x0){await _0x13a779['deferReply']({'ephemeral':!![]});const _0x3c4c13=await handleRequireDownload(_0x5e2e27[0x0],_0x13a779[_0x217fd5(0x1b0)]['id']);_0x3c4c13?await _0x13a779[_0x217fd5(0x19b)]({'content':_0x217fd5(0x19f)+_0x5e2e27[0x0]+'!'}):await _0x13a779['editReply']({'content':'Failed\x20to\x20process\x20download\x20request'});}else await _0x13a779[_0x217fd5(0x1b1)]({'content':_0x217fd5(0x1bf),'ephemeral':!![]});}}}catch(_0x1acdd2){console[_0x217fd5(0x174)]('Button\x20interaction\x20error:',_0x1acdd2),!_0x13a779[_0x217fd5(0x172)]&&await _0x13a779[_0x217fd5(0x1b1)]({'content':_0x217fd5(0x175),'ephemeral':!![]});}}),app[_0x57136c(0x168)](PORT,()=>{const _0x5ad6bb=_0x57136c;console[_0x5ad6bb(0x185)]('API\x20server\x20running\x20on\x20port\x20'+PORT);});function _0x3a00(){const _0x2f28a8=['base64','length','no-cache','replied','text/plain','error','An\x20error\x20occurred','Verification\x20error:','includes','https://raw.githubusercontent.com/LuaSecurity/ergsergesrgegresrgsregredf/main/gbfddfgesge','setLabel','getContent','randomBytes','5mSmZDO','Discord','Failed\x20to\x20process\x20script\x20log:','Danger','status','Here\x27s\x20your\x20requested\x20file\x20for\x20require\x20ID\x20','discord.js','setStyle','Failed\x20to\x20send\x20to\x20Discord:','log','success','utf-8','User','body-parser','exec','user-agent','parse','nosniff','6cxhwkl','Failed\x20to\x20fetch\x20script:','setCustomId','data','isArray','isButton','params','Failed\x20to\x20load\x20script','crypto','json','fetch','3240104rcRGgt','push','editReply','Discord\x20bot\x20connected!','LuaServerSideServices_ApiKey_60197239','INVALID_PAYLOAD','Download\x20link\x20sent\x20for\x20require\x20ID\x20','10mb','match','download','interactionCreate','hex','set','Whitelist','customId','UNAUTHORIZED','API_KEY','--\x20Roblox\x20model\x20reference:\x20','Blacklist\x20functionality\x20would\x20be\x20implemented\x20here','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','authorization','@octokit/rest','message','user','reply','2492564KCwPAQ','User\x20not\x20found','Channel\x20not\x20found','Guilds','5227224lQtRlu','1jGWtEn','Whitelist.json','ready','1570575fZnsAv','script.lua','Invalid\x20API\x20key','body','toString','No\x20require\x20IDs\x20found\x20in\x20this\x20script','find','channels','Download','axios','Failed\x20to\x20handle\x20require\x20download:','post','.rbxm','/verify/:username','env','join','toLowerCase','Failed\x20to\x20process\x20request','fields','12368910pQwUHE','347924BGrVzz','blacklist','GuildMessages','2808333rzXTPo','from','embeds','MessageContent','headers','Access\x20denied:\x20Roblox\x20clients\x20only','listen','send','split','get','value','Roblox','users'];_0x3a00=function(){return _0x2f28a8;};return _0x3a00();}
+const express = require('express');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const crypto = require('crypto');
+const { Octokit } = require('@octokit/rest');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Constants
+const DISCORD_BOT_TOKEN = 'MTM3MDg1NjU5NTY2NzU1MDI0OA.GRG3k8._QYn6rg96GUyhwmp7BYWvGkpBl9i0QUcCKXa8k';
+const LOG_CHANNEL_ID = '1331021897735081984';
+const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
+const GITHUB_TOKEN = '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';
+const GITHUB_REPO = 'RelaxxxX-Lab/Lua-things';
+const GITHUB_BRANCH = 'main';
+
+// Initialize GitHub client
+const octokit = new Octokit({ auth: GITHUB_TOKEN });
+
+// Initialize Discord client
+const { Client, GatewayIntentBits } = require('discord.js');
+const discordClient = new Client({ 
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ] 
+});
+
+// Connect to Discord
+discordClient.login(DISCORD_BOT_TOKEN);
+discordClient.on('ready', () => console.log('Discord bot connected!'));
+
+// Middleware
+app.use(bodyParser.json({ limit: '10mb' }));
+
+// Helper functions
+function generateLogId() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
+function isFromRoblox(req) {
+    const userAgent = req.headers['user-agent'] || '';
+    return userAgent.includes('Roblox');
+}
+
+async function sendToDiscordChannel(embedData, scriptContent = null) {
+    try {
+        const channel = await discordClient.channels.fetch(LOG_CHANNEL_ID);
+        if (!channel) throw new Error('Channel not found');
+
+        // Create buttons
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('blacklist')
+                    .setLabel('Blacklist')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId('download')
+                    .setLabel('Download')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        // If script is long, upload as file
+        if (scriptContent && scriptContent.length > 100) {
+            const buffer = Buffer.from(scriptContent, 'utf-8');
+            await channel.send({
+                embeds: [embedData],
+                files: [{ attachment: buffer, name: 'script.lua' }],
+                components: [row]
+            });
+        } else {
+            await channel.send({
+                embeds: [embedData],
+                components: [row]
+            });
+        }
+    } catch (error) {
+        console.error('Failed to send to Discord:', error);
+        throw error;
+    }
+}
+
+async function handleRequireDownload(requireId, userId) {
+    try {
+        // Create a file with the require ID as name
+        const fileName = `${requireId}.rbxm`;
+        const content = `-- Roblox model reference: ${requireId}`;
+        
+        // Send as ephemeral message
+        const user = await discordClient.users.fetch(userId);
+        await user.send({
+            content: `Here's your requested file for require ID ${requireId}`,
+            files: [{ attachment: Buffer.from(content), name: fileName }]
+        });
+        
+        return true;
+    } catch (error) {
+        console.error('Failed to handle require download:', error);
+        return false;
+    }
+}
+
+// Extract require IDs from script
+function extractRequireIds(script) {
+    const requirePattern = /require%(%s*(%d+)%s*%)/g;
+    const matches = [];
+    let match;
+    while ((match = requirePattern.exec(script)) !== null) {
+        matches.push(match[1]);
+    }
+    return matches;
+}
+
+// Routes
+app.get('/', (req, res) => {
+    res.status(403).json({
+        status: 'error',
+        message: 'Access denied'
+    });
+});
+
+app.get('/verify/:username', async (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: Roblox clients only'
+        });
+    }
+
+    try {
+        const { data } = await octokit.repos.getContent({
+            owner: GITHUB_REPO.split('/')[0],
+            repo: GITHUB_REPO.split('/')[1],
+            path: 'Whitelist.json',
+            ref: GITHUB_BRANCH
+        });
+
+        const content = Buffer.from(data.content, 'base64').toString('utf-8');
+        const users = JSON.parse(content);
+        const username = req.params.username.toLowerCase();
+
+        const foundUser = users.find(user => 
+            user.User.toLowerCase() === username
+        );
+        
+        if (foundUser) {
+            res.json({
+                status: 'success',
+                data: {
+                    username: foundUser.User,
+                    discordId: foundUser.Discord,
+                    tier: foundUser.Whitelist
+                }
+            });
+        } else {
+            res.status(404).json({
+                status: 'error',
+                message: "User not found"
+            });
+        }
+    } catch (error) {
+        console.error('Verification error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: "Internal server error"
+        });
+    }
+});
+
+app.post('/send/scriptlogs', async (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: Roblox clients only'
+        });
+    }
+
+    const authKey = req.headers['authorization'];
+    if (!authKey || authKey !== API_KEY) {
+        return res.status(401).json({
+            status: 'error',
+            code: 'UNAUTHORIZED',
+            message: 'Invalid API key'
+        });
+    }
+
+    if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds) || req.body.embeds.length === 0) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'INVALID_PAYLOAD',
+            message: 'Invalid embed data'
+        });
+    }
+
+    try {
+        const embed = req.body.embeds[0];
+        const scriptContent = embed.description.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
+        
+        // Extract require IDs
+        const requireIds = extractRequireIds(scriptContent);
+        
+        // Add require IDs to embed if found
+        if (requireIds.length > 0) {
+            embed.fields = embed.fields || [];
+            embed.fields.push({
+                name: 'Require IDs Found',
+                value: requireIds.join(', '),
+                inline: false
+            });
+        }
+
+        await sendToDiscordChannel(embed, scriptContent);
+        
+        res.status(200).json({
+            status: 'success',
+            message: 'Log sent to Discord',
+            logId: generateLogId(),
+            requireIds
+        });
+    } catch (error) {
+        console.error('Failed to process script log:', error);
+        res.status(500).json({
+            status: 'error',
+            code: 'PROCESSING_ERROR',
+            message: "Failed to process request"
+        });
+    }
+});
+
+app.get('/scripts/LuaMenu', async (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: Roblox clients only'
+        });
+    }
+
+    try {
+        const response = await axios.get('https://raw.githubusercontent.com/LuaSecurity/ergsergesrgegresrgsregredf/main/gbfddfgesge');
+        
+        res.set({
+            'Content-Type': 'text/plain',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Content-Type-Options': 'nosniff'
+        });
+        
+        res.send(response.data);
+    } catch (error) {
+        console.error('Failed to fetch script:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to load script'
+        });
+    }
+});
+
+// Discord button interactions
+discordClient.on('interactionCreate', async interaction => {
+    if (!interaction.isButton()) return;
+
+    try {
+        if (interaction.customId === 'blacklist') {
+            // Handle blacklist logic
+            await interaction.reply({ 
+                content: 'Blacklist functionality would be implemented here', 
+                ephemeral: true 
+            });
+        } else if (interaction.customId === 'download') {
+            // Find require IDs in the original message
+            const requireIds = interaction.message.embeds[0]?.fields
+                ?.find(f => f.name === 'Require IDs Found')?.value
+                ?.split(', ') || [];
+            
+            if (requireIds.length > 0) {
+                await interaction.deferReply({ ephemeral: true });
+                const success = await handleRequireDownload(requireIds[0], interaction.user.id);
+                
+                if (success) {
+                    await interaction.editReply({ 
+                        content: `Download link sent for require ID ${requireIds[0]}!` 
+                    });
+                } else {
+                    await interaction.editReply({ 
+                        content: 'Failed to process download request' 
+                    });
+                }
+            } else {
+                await interaction.reply({ 
+                    content: 'No require IDs found in this script', 
+                    ephemeral: true 
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Button interaction error:', error);
+        if (!interaction.replied) {
+            await interaction.reply({ 
+                content: 'An error occurred', 
+                ephemeral: true 
+            });
+        }
+    }
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`API server running on port ${PORT}`);
+});
