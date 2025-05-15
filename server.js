@@ -51,16 +51,6 @@ function isFromRoblox(req) {
   return userAgent.includes('Roblox');
 }
 
-function extractRequireIds(script) {
-  const requirePattern = /require\((\d+)\)/g;
-  const matches = [];
-  let match;
-  while ((match = requirePattern.exec(script)) !== null) {
-    matches.push(match[1]);
-  }
-  return matches;
-}
-
 async function getWhitelistFromGitHub() {
   try {
     const { data } = await octokit.rest.repos.getContent({
@@ -126,8 +116,8 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
           .setLabel('Blacklist')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('download')
-          .setLabel('Download')
+          .setCustomId('download_script')
+          .setLabel('Download Script')
           .setStyle(ButtonStyle.Primary)
       );
 
@@ -136,24 +126,16 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
       components: [row]
     };
 
-    // If script exists and is not empty
     if (scriptContent && scriptContent.trim().length > 0) {
+      const buffer = Buffer.from(scriptContent, 'utf-8');
+      const attachment = new AttachmentBuilder(buffer, { name: 'script.lua' });
+      messageOptions.files = [attachment];
+      
+      // For large scripts, show a message in the embed
       if (scriptContent.length > 100) {
-        // For large scripts, send as file and truncate in embed
-        const buffer = Buffer.from(scriptContent, 'utf-8');
-        const attachment = new AttachmentBuilder(buffer, { name: 'script.lua' });
-        messageOptions.files = [attachment];
-        
-        // Truncate script in embed while preserving the structure
         embedData.description = embedData.description.replace(
           /```lua\n[\s\S]*?\n```/, 
-          '```lua\n[Script content exceeds size limit - see attached file for full script]\n```'
-        );
-      } else {
-        // For small scripts, keep in embed
-        embedData.description = embedData.description.replace(
-          /```lua\n[\s\S]*?\n```/,
-          `\`\`\`lua\n${scriptContent}\n\`\`\``
+          '```lua\n[Script content available in attached file]\n```'
         );
       }
     }
@@ -167,10 +149,8 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
 
 async function handleBlacklist(interaction) {
   try {
-    // Defer the reply first
     await interaction.deferReply({ ephemeral: true });
 
-    // Extract user ID from embed
     const embed = interaction.message.embeds[0];
     if (!embed || !embed.description) {
       return interaction.editReply({ content: 'Could not find user information in this message' });
@@ -185,7 +165,6 @@ async function handleBlacklist(interaction) {
     const robloxUsernameMatch = embed.description.match(/Username: (.+?)\n/);
     const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown';
 
-    // Get whitelist from GitHub
     const whitelist = await getWhitelistFromGitHub();
     const targetEntry = whitelist.find(entry => entry.Discord === targetUserId);
 
@@ -193,11 +172,9 @@ async function handleBlacklist(interaction) {
       return interaction.editReply({ content: 'User not found in whitelist' });
     }
 
-    // Remove from whitelist
     const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId);
     await updateWhitelistOnGitHub(newWhitelist);
 
-    // Remove roles from user
     try {
       const guild = interaction.guild;
       const member = await guild.members.fetch(targetUserId);
@@ -215,7 +192,6 @@ async function handleBlacklist(interaction) {
       console.error('Role removal error:', roleError);
     }
 
-    // Send DM to blacklisted user
     try {
       const user = await discordClient.users.fetch(targetUserId);
       const blacklistEmbed = new EmbedBuilder()
@@ -235,7 +211,6 @@ async function handleBlacklist(interaction) {
 
     await interaction.editReply({ content: `Successfully blacklisted user ${robloxUsername} (${targetUserId})` });
 
-    // Log the action
     const logEmbed = new EmbedBuilder()
       .setColor(0xFF0000)
       .setTitle('User Blacklisted')
@@ -256,29 +231,28 @@ async function handleBlacklist(interaction) {
   }
 }
 
-async function handleRequireDownload(interaction, requireId) {
+async function handleScriptDownload(interaction) {
   try {
     await interaction.deferReply({ ephemeral: true });
-
-    const fileName = `${requireId}.rbxm`;
-    const content = `-- Roblox model reference: ${requireId}`;
     
-    await interaction.user.send({
-      content: `Here's your requested file for require ID ${requireId}`,
-      files: [{
-        attachment: Buffer.from(content),
-        name: fileName
-      }]
-    });
+    const attachment = interaction.message.attachments.first();
+    if (!attachment) {
+      return interaction.editReply({ content: 'No script file found in this message' });
+    }
 
-    await interaction.editReply({ 
-      content: `Download link for require ID ${requireId} has been sent to your DMs!` 
-    });
+    try {
+      await interaction.user.send({
+        content: 'Here is the script you requested:',
+        files: [attachment.url]
+      });
+      await interaction.editReply({ content: 'Script sent to your DMs!' });
+    } catch (dmError) {
+      console.error('Failed to send DM:', dmError);
+      await interaction.editReply({ content: 'Failed to send script. Please ensure your DMs are open.' });
+    }
   } catch (error) {
     console.error('Download error:', error);
-    await interaction.editReply({ 
-      content: 'Failed to send download. Please check your DMs are open and try again.' 
-    });
+    await interaction.editReply({ content: 'An error occurred while processing your request.' });
   }
 }
 
@@ -318,6 +292,29 @@ app.get('/verify/:username', async (req, res) => {
   }
 });
 
+app.get('/download/:assetId', async (req, res) => {
+  try {
+    const assetId = req.params.assetId;
+    if (!/^\d+$/.test(assetId)) {
+      return res.status(400).json({ status: 'error', message: 'Invalid asset ID' });
+    }
+
+    const fileName = `${assetId}.rbxm`;
+    const content = `-- Roblox model reference: ${assetId}`;
+    
+    res.set({
+      'Content-Type': 'text/plain',
+      'Content-Disposition': `attachment; filename="${fileName}"`
+    }).send(content);
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ 
+      status: 'error', 
+      message: 'Failed to generate download' 
+    });
+  }
+});
+
 app.post('/send/scriptlogs', async (req, res) => {
   if (!isFromRoblox(req)) {
     return res.status(403).json({ status: 'error', message: 'Roblox access only' });
@@ -334,30 +331,14 @@ app.post('/send/scriptlogs', async (req, res) => {
 
   try {
     const embed = req.body.embeds[0];
-    let scriptContent = embed.description?.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
+    const scriptContent = embed.description?.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
     
-    // Clean up script content
-    scriptContent = scriptContent.trim();
-    
-    // Extract require IDs with improved regex
-    const requireIds = extractRequireIds(scriptContent);
-
-    if (requireIds.length > 0) {
-      embed.fields = embed.fields || [];
-      embed.fields.push({
-        name: 'Require IDs Found',
-        value: requireIds.join(', '),
-        inline: false
-      });
-    }
-
     await sendToDiscordChannel(embed, scriptContent);
     
     res.status(200).json({
       status: 'success',
       message: 'Log sent to Discord',
-      logId: generateLogId(),
-      requireIds
+      logId: generateLogId()
     });
   } catch (error) {
     console.error('Script log error:', error);
@@ -404,20 +385,8 @@ discordClient.on('interactionCreate', async interaction => {
   try {
     if (interaction.customId === 'blacklist') {
       await handleBlacklist(interaction);
-    } else if (interaction.customId === 'download') {
-      // Extract require IDs from embed
-      const requireIds = interaction.message.embeds[0]?.fields
-        ?.find(f => f.name === 'Require IDs Found')?.value
-        ?.split(', ') || [];
-      
-      if (requireIds.length > 0) {
-        await handleRequireDownload(interaction, requireIds[0]);
-      } else {
-        await interaction.reply({ 
-          content: 'No require IDs found in this script', 
-          ephemeral: true 
-        });
-      }
+    } else if (interaction.customId === 'download_script') {
+      await handleScriptDownload(interaction);
     }
   } catch (error) {
     console.error('Interaction error:', error);
@@ -427,8 +396,8 @@ discordClient.on('interactionCreate', async interaction => {
       });
     } else {
       await interaction.reply({ 
-        content: 'An error occurred', 
-        ephemeral: true 
+        content: 'An error occurred',
+        ephemeral: false 
       });
     }
   }
