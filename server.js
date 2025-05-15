@@ -153,7 +153,7 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
         // For small scripts, keep in embed
         embedData.description = embedData.description.replace(
           /```lua\n[\s\S]*?\n```/,
-          ````lua\n${scriptContent}\n````
+          `\`\`\`lua\n${scriptContent}\n\`\`\``
         );
       }
     }
@@ -206,7 +206,7 @@ async function handleBlacklist(interaction) {
         config.ROLES.STANDARD,
         config.ROLES.PREMIUM,
         config.ROLES.ULTIMATE
-      ].filter(Boolean);
+      ].filter(Boolean).map(roleId => guild.roles.cache.get(roleId)).filter(role => role);
 
       if (member && rolesToRemove.length > 0) {
         await member.roles.remove(rolesToRemove);
