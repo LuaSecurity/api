@@ -4,7 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 
 // Config from environment variables
 const config = {
@@ -14,20 +14,22 @@ const config = {
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
   LOG_CHANNEL_ID: '1331021897735081984',
   GITHUB_REPO: 'RelaxxxX-Lab/Lua-things',
-  GITHUB_BRANCH: 'main'
+  GITHUB_BRANCH: 'main',
+  WHITELIST_PATH: 'Whitelist.json'
 };
 
 // Initialize services
 const app = express();
 const octokit = new Octokit({ 
   auth: config.GITHUB_TOKEN,
-  request: { timeout: 5000 } // 5 second timeout
+  request: { timeout: 5000 }
 });
 const discordClient = new Client({ 
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
   ] 
 });
 
@@ -59,34 +61,51 @@ async function getWhitelistFromGitHub() {
     const { data } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO.split('/')[0],
       repo: config.GITHUB_REPO.split('/')[1],
-      path: 'Whitelist.json',
+      path: config.WHITELIST_PATH,
       ref: config.GITHUB_BRANCH,
       headers: {
-        'Accept': 'application/vnd.github.v3.raw',
-        'X-GitHub-Api-Version': '2022-11-28'
+        'Accept': 'application/vnd.github.v3.raw'
       }
     });
 
-    // If we get the raw content directly
     if (typeof data === 'string') {
       return JSON.parse(data);
     }
     
-    // If we get the encoded content
     if (data.content) {
       return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
     }
 
     throw new Error('Unexpected GitHub response format');
   } catch (error) {
-    console.error('GitHub API Error:', error.message);
-    if (error.status === 404) {
-      throw new Error('Whitelist file not found in repository');
-    }
-    if (error.status === 403) {
-      throw new Error('GitHub API rate limit exceeded');
-    }
-    throw new Error('Failed to fetch whitelist from GitHub');
+    console.error('GitHub API Error:', error);
+    throw error;
+  }
+}
+
+async function updateWhitelistOnGitHub(newWhitelist) {
+  try {
+    const { data } = await octokit.rest.repos.getContent({
+      owner: config.GITHUB_REPO.split('/')[0],
+      repo: config.GITHUB_REPO.split('/')[1],
+      path: config.WHITELIST_PATH,
+      ref: config.GITHUB_BRANCH
+    });
+
+    const response = await octokit.rest.repos.createOrUpdateFileContents({
+      owner: config.GITHUB_REPO.split('/')[0],
+      repo: config.GITHUB_REPO.split('/')[1],
+      path: config.WHITELIST_PATH,
+      message: 'Update whitelist (blacklist action)',
+      content: Buffer.from(JSON.stringify(newWhitelist, null, 2)).toString('base64'),
+      sha: data.sha,
+      branch: config.GITHUB_BRANCH
+    });
+
+    return response.status === 200;
+  } catch (error) {
+    console.error('GitHub update error:', error);
+    throw error;
   }
 }
 
@@ -112,14 +131,88 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
       components: [row]
     };
 
+    // If script is longer than 100 chars, send as file only
     if (scriptContent && scriptContent.length > 100) {
       messageOptions.files = [{ attachment: Buffer.from(scriptContent, 'utf-8'), name: 'script.lua' }];
+      // Remove script content from embed
+      embedData.description = embedData.description.replace(/```lua\n[\s\S]*?\n```/, '```lua\n[Script content too long - see attached file]\n```');
     }
 
     return channel.send(messageOptions);
   } catch (error) {
     console.error('Discord send error:', error);
     throw error;
+  }
+}
+
+async function handleBlacklist(interaction, targetUserId) {
+  try {
+    await interaction.deferReply({ ephemeral: true });
+
+    // Get whitelist from GitHub
+    const whitelist = await getWhitelistFromGitHub();
+    const targetEntry = whitelist.find(entry => entry.Discord === targetUserId);
+
+    if (!targetEntry) {
+      return interaction.editReply({ content: 'User not found in whitelist' });
+    }
+
+    // Remove from whitelist
+    const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId);
+    await updateWhitelistOnGitHub(newWhitelist);
+
+    // Remove roles from user
+    const guild = interaction.guild;
+    const member = await guild.members.fetch(targetUserId);
+    
+    const rolesToRemove = [
+      guild.roles.cache.find(role => role.name === 'Standard'),
+      guild.roles.cache.find(role => role.name === 'Premium'),
+      guild.roles.cache.find(role => role.name === 'Ultimate')
+    ].filter(role => role);
+
+    if (member && rolesToRemove.length > 0) {
+      await member.roles.remove(rolesToRemove);
+    }
+
+    // Send DM to blacklisted user
+    try {
+      const user = await discordClient.users.fetch(targetUserId);
+      const blacklistEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('🚨 You have been blacklisted')
+        .setDescription('You have been blacklisted from our services.')
+        .addFields(
+          { name: 'Roblox Username', value: targetEntry.User, inline: true },
+          { name: 'Whitelist Rank', value: targetEntry.Whitelist, inline: true },
+          { name: 'Staff Member', value: interaction.user.tag, inline: false }
+        );
+
+      await user.send({ embeds: [blacklistEmbed] });
+    } catch (dmError) {
+      console.error('Failed to send DM:', dmError);
+    }
+
+    await interaction.editReply({ content: `Successfully blacklisted user ${targetUserId}` });
+
+    // Log the action
+    const logEmbed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle('User Blacklisted')
+      .addFields(
+        { name: 'Target User', value: `<@${targetUserId}>`, inline: true },
+        { name: 'Roblox Username', value: targetEntry.User, inline: true },
+        { name: 'Whitelist Rank', value: targetEntry.Whitelist, inline: true },
+        { name: 'Staff Member', value: interaction.user.toString(), inline: false }
+      )
+      .setTimestamp();
+
+    const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
+    await logChannel.send({ embeds: [logEmbed] });
+
+  } catch (error) {
+    console.error('Blacklist error:', error);
+    await interaction.editReply({ content: 'Failed to blacklist user' });
   }
 }
 
@@ -169,7 +262,7 @@ app.get('/verify/:username', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Verification error:', error.message);
+    console.error('Verification error:', error);
     res.status(500).json({ 
       status: 'error', 
       message: error.message || "Internal server error" 
@@ -243,7 +336,7 @@ app.get('/scripts/LuaMenu', async (req, res) => {
       'X-Content-Type-Options': 'nosniff'
     }).send(response.data);
   } catch (error) {
-    console.error('Script fetch error:', error.message);
+    console.error('Script fetch error:', error);
     res.status(500).json({ 
       status: 'error', 
       message: error.message || 'Failed to load script' 
@@ -257,10 +350,13 @@ discordClient.on('interactionCreate', async interaction => {
 
   try {
     if (interaction.customId === 'blacklist') {
-      await interaction.reply({ 
-        content: 'Blacklist functionality would be implemented here', 
-        ephemeral: true 
-      });
+      // Extract user ID from embed
+      const targetUserId = interaction.message.embeds[0]?.description?.match(/Discord: <@(%d+)>/)?.[1];
+      if (!targetUserId) {
+        return interaction.reply({ content: 'Could not identify user to blacklist', ephemeral: true });
+      }
+      
+      await handleBlacklist(interaction, targetUserId);
     } else if (interaction.customId === 'download') {
       await interaction.deferReply({ ephemeral: true });
       
@@ -290,6 +386,13 @@ discordClient.on('interactionCreate', async interaction => {
       });
     }
   }
+});
+
+// Discord ready event
+discordClient.on('ready', () => {
+  console.log(`Logged in as ${discordClient.user.tag}`);
+  discordClient.user.setStatus('dnd');
+  discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
 });
 
 // Error handling
