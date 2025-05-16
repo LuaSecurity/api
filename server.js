@@ -61,19 +61,22 @@ function isFromRoblox(req) {
 // Utility: Fetch whitelist from GitHub
 async function fetchWhitelist() {
   try {
-    const { data } = await octokit.rest.repos.getContent({
+    const response = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
       owner: config.githubRepo.split('/')[0],
       repo: config.githubRepo.split('/')[1],
       path: config.whitelistPath,
-      ref: config.githubBranch,
-      headers: { 'Accept': 'application/vnd.github.v3.raw' }
+      ref: config.githubBranch
     });
 
-    const content = Buffer.from(data.content, 'base64').toString('utf-8');
-    return JSON.parse(content);
+    if (!response?.data?.content) {
+      throw new Error('No content found in the whitelist file.');
+    }
+
+    const decoded = Buffer.from(response.data.content, 'base64').toString('utf-8');
+    return JSON.parse(decoded);
   } catch (error) {
     console.error('[GitHub] Error fetching whitelist:', error.message);
-    throw new Error('Failed to fetch whitelist');
+    throw error;
   }
 }
 
