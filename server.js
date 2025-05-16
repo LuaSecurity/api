@@ -1,64 +1,80 @@
+// Load environment variables
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
 const { Client, GatewayIntentBits } = require('discord.js');
+const rateLimit = require('express-rate-limit');
 
-// Configurações do ambiente
+const app = express();
+
+// Configurations
 const config = {
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
-  GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-  LOG_CHANNEL_ID: '1331021897735081984',
   GITHUB_REPO: 'RelaxxxX-Lab/Lua-things',
   GITHUB_BRANCH: 'main',
   WHITELIST_PATH: 'Whitelist.json',
-  ROLES: {
-    STANDARD: '1330552089759191064',
-    PREMIUM: '1333286640248029264',
-    ULTIMATE: '1337177751202828300'
-  }
+  PORT: process.env.PORT || 3000,
+  LOG_CHANNEL_ID: '1331021897735081984'
 };
 
-// Inicialização dos serviços
-const app = express();
-const octokit = new Octokit({ 
-  auth: config.GITHUB_TOKEN,
-  request: { timeout: 5000 }
-});
-const discordClient = new Client({ 
+// Initialize Discord bot
+const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers
-  ] 
+  ]
 });
 
-// Armazenamento em memória para scripts
-const scriptQueues = new Map();
+// Initialize Octokit for GitHub API
+const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
 
-// Middleware
-app.use(cors());  // Permitir acessos externos (Vercel ou outro domínio)
-app.use(bodyParser.json({ limit: '10mb' }));
+// Improved Logging
+function logMessage(level, message) {
+  console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}]: ${message}`);
+}
 
-// Função para gerar ID de log
+// Generate a unique log ID
 function generateLogId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-// Verificar se a requisição é proveniente do Roblox
-function isFromRoblox(req) {
-  const userAgent = req.headers['user-agent'] || '';
-  return userAgent.includes('Roblox');
+// Input Validation Function
+function validateUsername(username) {
+  return typeof username === 'string' && /^[a-zA-Z0-9_]+$/.test(username);
 }
 
-// Recuperar lista de permissões do GitHub
-async function getWhitelistFromGitHub() {
+// Health Check Route
+app.get('/health', (req, res) => {
+  res.json({ status: 'success', message: 'API is running smoothly!' });
+});
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: { status: 'error', message: 'Too many requests, please try again later.' }
+});
+app.use(limiter);
+
+// Discord Bot Initialization
+discordClient.on('ready', () => {
+  logMessage('info', `Bot logged in as ${discordClient.user.tag}`);
+  discordClient.user.setActivity('Managing Whitelist', { type: 'WATCHING' });
+});
+
+// Fetch whitelist from GitHub
+async function getWhitelist() {
   try {
     const { data } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO.split('/')[0],
@@ -69,97 +85,76 @@ async function getWhitelistFromGitHub() {
     });
     return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
   } catch (error) {
-    console.error('Erro ao obter whitelist:', error.message);
-    throw error;
+    logMessage('error', `Failed to fetch whitelist: ${error.message}`);
+    throw new Error('Unable to retrieve whitelist');
   }
 }
 
-// Rota para executar o script
+// Submit Script Route
 app.post('/submit', async (req, res) => {
   const { username, script } = req.body;
-
-  if (!username || !script) {
-    return res.status(400).json({ status: 'error', message: 'Usuário ou script ausente' });
+  if (!validateUsername(username) || typeof script !== 'string') {
+    return res.status(400).json({ status: 'error', message: 'Invalid username or script' });
   }
 
   try {
     const response = await axios.post(`https://luaserverside.onrender.com/queue/${username}`, { script });
     if (response.status === 200) {
-      res.json({ status: 'success', message: 'Script enviado com sucesso!' });
+      res.json({ status: 'success', message: 'Script successfully submitted!' });
     } else {
-      res.status(500).json({ status: 'error', message: 'Falha ao enviar script para o servidor' });
+      throw new Error('Failed to submit script');
     }
   } catch (error) {
-    console.error('Erro ao enviar script:', error.message);
-    res.status(500).json({ status: 'error', message: 'Erro interno ao enviar script' });
+    logMessage('error', `Script submission error: ${error.message}`);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 });
 
-// Rota para verificar o usuário
+// User Verification Route
 app.get('/verify/:username', async (req, res) => {
   const username = req.params.username.toLowerCase();
+  if (!validateUsername(username)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid username' });
+  }
 
   try {
-    const whitelist = await getWhitelistFromGitHub();
-    const foundUser = whitelist.find(user => user.User.toLowerCase() === username);
-
-    if (!foundUser) {
-      return res.status(404).json({ status: 'error', message: 'Usuário não encontrado na whitelist' });
+    const whitelist = await getWhitelist();
+    const user = whitelist.find(item => item.User.toLowerCase() === username);
+    if (!user) {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
     }
-
-    res.json({ status: 'success', data: foundUser });
+    res.json({ status: 'success', data: user });
   } catch (error) {
-    console.error('Erro na verificação:', error.message);
-    res.status(500).json({ status: 'error', message: 'Erro interno ao verificar usuário' });
+    logMessage('error', `User verification error: ${error.message}`);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 });
 
-// Rota para baixar arquivo
-app.get('/download/:assetId', (req, res) => {
-  const assetId = req.params.assetId;
-  if (!/^\d+$/.test(assetId)) {
-    return res.status(400).json({ status: 'error', message: 'ID de ativo inválido' });
-  }
-
-  const fileName = `${assetId}.rbxm`;
-  const content = `-- Roblox model reference: ${assetId}`;
-
-  res.set({
-    'Content-Type': 'text/plain',
-    'Content-Disposition': `attachment; filename="${fileName}"`
-  }).send(content);
-});
-
-// Rota raiz
-app.get('/', (req, res) => {
-  res.json({ status: 'success', message: 'API do Lua Executor está ativa!' });
-});
-
-// Evento de inicialização do Discord
-discordClient.on('ready', () => {
-  console.log(`Bot conectado como ${discordClient.user.tag}`);
-  discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
-});
-
-// Tratamento de erros gerais
-process.on('unhandledRejection', error => {
-  console.error('Erro não tratado:', error.message);
-});
-
-process.on('uncaughtException', error => {
-  console.error('Exceção não capturada:', error.message);
-});
-
-// Inicialização do servidor
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
-
-// Login no Discord
-discordClient.login(config.DISCORD_BOT_TOKEN)
-  .then(() => console.log('Bot conectado com sucesso'))
-  .catch(error => {
-    console.error('Erro ao conectar o bot:', error.message);
-    process.exit(1);
+// Discord Bot Reconnect Logic
+discordClient.on('disconnect', () => {
+  logMessage('warn', 'Bot disconnected, attempting to reconnect...');
+  discordClient.login(config.DISCORD_BOT_TOKEN).catch(err => {
+    logMessage('error', `Reconnection failed: ${err.message}`);
   });
+});
+
+// Start Server
+app.listen(config.PORT, () => {
+  logMessage('info', `Server running on port ${config.PORT}`);
+});
+
+// Login to Discord
+discordClient.login(config.DISCORD_BOT_TOKEN).catch(error => {
+  logMessage('error', `Discord login failed: ${error.message}`);
+  process.exit(1);
+});
+
+// Handle Unhandled Rejections
+process.on('unhandledRejection', error => {
+  logMessage('error', `Unhandled rejection: ${error.message}`);
+});
+
+// Handle Uncaught Exceptions
+process.on('uncaughtException', error => {
+  logMessage('error', `Uncaught exception: ${error.message}`);
+});
