@@ -1,169 +1,166 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
-const cors = require('cors');
 const crypto = require('crypto');
-const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits } = require('discord.js');
-
-// Validate required environment variables
-['API_KEY', 'GITHUB_TOKEN', 'DISCORD_BOT_TOKEN', 'GITHUB_LUA_MENU_URL'].forEach(key => {
-  if (!process.env[key]) {
-    console.error(`Missing environment variable: ${key}`);
-    process.exit(1);
-  }
-});
-
-// Configuration
-const config = {
-  apiKey: process.env.API_KEY,
-  githubToken: process.env.GITHUB_TOKEN,
-  discordToken: process.env.DISCORD_BOT_TOKEN,
-  githubLuaMenuUrl: process.env.GITHUB_LUA_MENU_URL,
-  logChannelId: '1331021897735081984',
-  githubRepo: 'RelaxxxX-Lab/Lua-things',
-  githubBranch: 'main',
-  whitelistPath: 'Whitelist.json',
-  roles: {
-    standard: '1330552089759191064',
-    premium: '1333286640248029264',
-    ultimate: '1337177751202828300'
-  }
-};
-
-// Initialize services
 const app = express();
-const octokit = new Octokit({ auth: config.githubToken });
-const discordClient = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
-  ]
-});
+const PORT = process.env.PORT || 3000;
+
+// Constants
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1358494144049184821/oGi8Wxiedvw3HLZRkvFeGnFb9LeCl6t1MnzwF2BteqIu_BV1yxtEJqaox-OKNwsoXPr9';
+const API_KEY = process.env.API_KEY || 'LuaServerSideServices_ApiKey_60197239';
 
 // Middleware
-app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json());
 
-// Utility: Log ID generator
+// Helper functions
 function generateLogId() {
-  return crypto.randomBytes(8).toString('hex');
+    return crypto.randomBytes(8).toString('hex');
 }
 
-// Utility: Roblox request check
 function isFromRoblox(req) {
-  return (req.headers['user-agent'] || '').includes('Roblox');
+    const userAgent = req.headers['user-agent'] || '';
+    return userAgent.includes('Roblox');
 }
 
-// Utility: Fetch whitelist from GitHub
-async function fetchWhitelist() {
-  try {
-    const response = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-      owner: config.githubRepo.split('/')[0],
-      repo: config.githubRepo.split('/')[1],
-      path: config.whitelistPath,
-      ref: config.githubBranch
-    });
-
-    if (!response?.data?.content) {
-      throw new Error('No content found in the whitelist file.');
-    }
-
-    const decoded = Buffer.from(response.data.content, 'base64').toString('utf-8');
-    return JSON.parse(decoded);
-  } catch (error) {
-    console.error('[GitHub] Error fetching whitelist:', error.message);
-    throw error;
-  }
-}
-
-// POST /submit — Submit script to executor
-app.post('/submit', async (req, res) => {
-  const { username, script } = req.body;
-
-  if (!username || !script) {
-    return res.status(400).json({ status: 'error', message: 'Missing username or script' });
-  }
-
-  try {
-    const response = await axios.post(`https://luaserverside.onrender.com/queue/${username}`, { script });
-
-    if (response.status === 200) {
-      return res.json({ status: 'success', message: 'Script successfully submitted!' });
-    }
-
-    throw new Error(`Unexpected response status: ${response.status}`);
-  } catch (error) {
-    console.error('[Script Submit] Error:', error.message);
-    return res.status(500).json({ status: 'error', message: 'Failed to submit script' });
-  }
-});
-
-// GET /verify/:username — Check if user is in whitelist
-app.get('/verify/:username', async (req, res) => {
-  const username = req.params.username.toLowerCase();
-
-  try {
-    const whitelist = await fetchWhitelist();
-    const user = whitelist.find(entry => entry.User.toLowerCase() === username);
-
-    if (!user) {
-      return res.status(404).json({ status: 'error', message: 'User not found in whitelist' });
-    }
-
-    return res.json({ status: 'success', data: user });
-  } catch (error) {
-    return res.status(500).json({ status: 'error', message: 'Verification failed' });
-  }
-});
-
-// GET /download/:assetId — Download placeholder file
-app.get('/download/:assetId', (req, res) => {
-  const assetId = req.params.assetId;
-
-  if (!/^\d+$/.test(assetId)) {
-    return res.status(400).json({ status: 'error', message: 'Invalid asset ID' });
-  }
-
-  const filename = `${assetId}.rbxm`;
-  const content = `-- Roblox model reference: ${assetId}`;
-
-  res.setHeader('Content-Type', 'text/plain');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  return res.send(content);
-});
-
-// Root route
+// Routes
 app.get('/', (req, res) => {
-  return res.json({ status: 'success', message: 'Lua Executor API is online' });
+    res.status(403).json({
+        status: 'error',
+        message: 'Sorry, you cant access this page directly'
+    });
 });
 
-// Discord bot events
-discordClient.once('ready', () => {
-  console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
-  discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
+app.get('/verify/:username', async (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: this endpoint is only available to Roblox clients'
+        });
+    }
+
+    try {
+        const username = req.params.username;
+        const githubUrl = 'https://raw.githubusercontent.com/RelaxxxX-Lab/Lua-things/main/Whitelist.json';
+        
+        const response = await axios.get(githubUrl);
+        const users = response.data;
+
+        const foundUser = users.find(user => 
+            user.User.toLowerCase() === username.toLowerCase()
+        );
+        
+        if (foundUser) {
+            res.json({
+                status: 'success',
+                data: {
+                    username: foundUser.User,
+                    discordId: foundUser.Discord,
+                    tier: foundUser.Whitelist
+                }
+            });
+        } else {
+            res.status(404).json({
+                status: 'error',
+                message: "Couldn't find that user in our system"
+            });
+        }
+    } catch (error) {
+        console.error('Something went wrong:', error);
+        res.status(500).json({
+            status: 'error',
+            message: "We hit a snag while processing your request"
+        });
+    }
 });
 
-// Error handling
-process.on('unhandledRejection', err => {
-  console.error('[Unhandled Rejection]', err);
+app.post('/send/scriptlogs', (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: this endpoint is only available to Roblox clients'
+        });
+    }
+
+    const authKey = req.headers['authorization'];
+    
+    if (!authKey || authKey !== API_KEY) {
+        return res.status(401).json({
+            status: 'error',
+            code: 'UNAUTHORIZED',
+            message: 'You need a valid key to access this'
+        });
+    }
+
+    if (!req.body || !req.body.embeds || !Array.isArray(req.body.embeds)) {
+        return res.status(400).json({
+            status: 'error',
+            code: 'INVALID_PAYLOAD',
+            message: 'Your data needs to include proper embed information'
+        });
+    }
+
+    axios.post(WEBHOOK_URL, req.body, {
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(() => {
+        res.status(200).json({
+            status: 'success',
+            message: 'Your message was delivered to Discord',
+            logId: generateLogId()
+        });
+    })
+    .catch(error => {
+        console.error('Failed to send:', error);
+        res.status(500).json({
+            status: 'error',
+            code: 'WEBHOOK_FAILED',
+            message: "We couldn't send your message through"
+        });
+    });
 });
 
-process.on('uncaughtException', err => {
-  console.error('[Uncaught Exception]', err);
+app.get('/scripts/luamenu', async (req, res) => {
+    if (!isFromRoblox(req)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access denied: this endpoint is only available to Roblox clients'
+        });
+    }
+
+    try {
+        const referer = req.headers['referer'] || '';
+        const isLikelyExploit = referer.includes('RobloxPlayer') || 
+                              req.headers['user-agent'].includes('Roblox') ||
+                              req.headers['origin'] === 'roblox-player';
+
+        if (!isLikelyExploit) {
+            return res.status(403).json({
+                status: 'error',
+                message: 'Direct script access is not allowed'
+            });
+        }
+
+        const response = await axios.get('https://raw.githubusercontent.com/LuaSecurity/ergsergesrgegresrgsregredf/refs/heads/main/gbfddfgesge');
+        
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        
+        res.send(response.data);
+    } catch (error) {
+        console.error('Failed to fetch script:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to load script content'
+        });
+    }
 });
 
 // Start server
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`[Server] Running on port ${PORT}`);
-});
-
-// Discord login
-discordClient.login(config.discordToken).catch(error => {
-  console.error('[Discord] Failed to login:', error.message);
-  process.exit(1);
+    console.log(`Server running on port ${PORT}`);
 });
