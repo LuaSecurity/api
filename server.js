@@ -114,72 +114,68 @@ const sendToDiscordChannel = async (embedData, scriptContent = null) => {
 const handleBlacklist = async interaction => {
   await interaction.deferReply({ ephemeral: true });
   const embed = interaction.message.embeds[0];
-  if (!embed?.description) return interaction.editReply({ content: 'No user data in this message' });
+  if (!embed?.description) return interaction.editReply({ content: 'No user information found' });
 
   const discordIdMatch = embed.description.match(/Discord: <@(\d+)>/);
-  if (!discordIdMatch) return interaction.editReply({ content: 'Invalid user info' });
+  const targetUserId = discordIdMatch?.[1];
+  if (!targetUserId) return interaction.editReply({ content: 'User ID not found' });
 
-  const targetUserId = discordIdMatch[1];
   const robloxUsername = embed.description.match(/Username: (.+?)\n/)?.[1] || 'Unknown';
-
   const whitelist = await getWhitelistFromGitHub();
-  const targetIndex = whitelist.findIndex(entry => entry.Discord === targetUserId);
+  const targetEntry = whitelist.find(entry => entry.Discord === targetUserId);
+  if (!targetEntry) return interaction.editReply({ content: 'User not in whitelist' });
 
-  if (targetIndex === -1) return interaction.editReply({ content: 'User not in whitelist' });
-
-  const targetEntry = whitelist[targetIndex];
-  whitelist.splice(targetIndex, 1);
-  await updateWhitelistOnGitHub(whitelist);
+  const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId);
+  await updateWhitelistOnGitHub(newWhitelist);
 
   try {
     const member = await interaction.guild.members.fetch(targetUserId);
-    const rolesToRemove = Object.values(config.ROLES).map(r => interaction.guild.roles.cache.get(r)).filter(Boolean);
-    if (member && rolesToRemove.length) await member.roles.remove(rolesToRemove);
+    const rolesToRemove = Object.values(config.ROLES)
+      .map(id => interaction.guild.roles.cache.get(id))
+      .filter(Boolean);
+    if (rolesToRemove.length) await member.roles.remove(rolesToRemove);
   } catch {}
 
   try {
     const user = await discordClient.users.fetch(targetUserId);
-    await user.send({
-      embeds: [new EmbedBuilder()
-        .setColor(0xff0000)
-        .setTitle('🚨 You have been blacklisted')
-        .setDescription('You have been blacklisted from our services.')
-        .addFields(
-          { name: 'Roblox Username', value: targetEntry.User, inline: true },
-          { name: 'Whitelist Rank', value: targetEntry.Whitelist, inline: true },
-          { name: 'Staff Member', value: interaction.user.tag }
-        )
-      ]
-    });
-  } catch {}
-
-  await interaction.editReply({ content: `Blacklisted: ${robloxUsername} (<@${targetUserId}>)` });
-
-  await (await discordClient.channels.fetch(config.LOG_CHANNEL_ID)).send({
-    embeds: [new EmbedBuilder()
+    const blacklistEmbed = new EmbedBuilder()
       .setColor(0xff0000)
-      .setTitle('User Blacklisted')
+      .setTitle('🚨 You have been blacklisted')
+      .setDescription('You are no longer allowed to access the services.')
       .addFields(
-        { name: 'Target User', value: `<@${targetUserId}>`, inline: true },
         { name: 'Roblox Username', value: targetEntry.User, inline: true },
         { name: 'Whitelist Rank', value: targetEntry.Whitelist, inline: true },
-        { name: 'Staff Member', value: interaction.user.toString() }
-      )
-      .setTimestamp()
-    ]
-  });
+        { name: 'Staff Member', value: interaction.user.tag, inline: false }
+      );
+    await user.send({ embeds: [blacklistEmbed] });
+  } catch {}
+
+  await interaction.editReply({ content: `Blacklisted ${robloxUsername} (${targetUserId}) successfully.` });
+
+  const logEmbed = new EmbedBuilder()
+    .setColor(0xff0000)
+    .setTitle('User Blacklisted')
+    .addFields(
+      { name: 'User', value: `<@${targetUserId}>`, inline: true },
+      { name: 'Roblox Username', value: targetEntry.User, inline: true },
+      { name: 'Rank', value: targetEntry.Whitelist, inline: true },
+      { name: 'By', value: interaction.user.toString(), inline: false }
+    )
+    .setTimestamp();
+  const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
+  await logChannel.send({ embeds: [logEmbed] });
 };
 
 const handleScriptDownload = async interaction => {
   await interaction.deferReply({ ephemeral: true });
   const attachment = interaction.message.attachments.first();
-  if (!attachment) return interaction.editReply({ content: 'No file found' });
+  if (!attachment) return interaction.editReply({ content: 'Script not found' });
 
   try {
-    const buffer = await fetch(attachment.url).then(res => res.arrayBuffer());
-    const file = new AttachmentBuilder(Buffer.from(buffer), { name: 'script.lua' });
-    await interaction.editReply({ content: 'Your script:', files: [file] });
+    const buffer = await axios.get(attachment.url, { responseType: 'arraybuffer' });
+    const file = new AttachmentBuilder(Buffer.from(buffer.data), { name: attachment.name || 'script.lua' });
+    await interaction.editReply({ content: 'Here is your script:', files: [file] });
   } catch {
-    await interaction.editReply({ content: 'Failed to send script file.' });
+    await interaction.editReply({ content: 'Could not send script. Check your DMs or contact support.' });
   }
 };
