@@ -2,9 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
+const cors = require('cors');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 
 // Configurações do ambiente
 const config = {
@@ -42,8 +43,8 @@ const discordClient = new Client({
 const scriptQueues = new Map();
 
 // Middleware
+app.use(cors());  // Permitir acessos externos (Vercel ou outro domínio)
 app.use(bodyParser.json({ limit: '10mb' }));
-app.use(express.static('public'));  // Servir arquivos estáticos
 
 // Função para gerar ID de log
 function generateLogId() {
@@ -66,30 +67,9 @@ async function getWhitelistFromGitHub() {
       ref: config.GITHUB_BRANCH,
       headers: { 'Accept': 'application/vnd.github.v3.raw' }
     });
-    return typeof data === 'string' ? JSON.parse(data) : JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
+    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
   } catch (error) {
-    console.error('Erro ao obter whitelist:', error);
-    throw error;
-  }
-}
-
-// Enviar script para o Discord
-async function sendToDiscordChannel(embedData, scriptContent = null) {
-  try {
-    const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-    if (!channel) throw new Error('Canal não encontrado');
-
-    const messageOptions = { embeds: [embedData] };
-
-    if (scriptContent) {
-      const buffer = Buffer.from(scriptContent, 'utf-8');
-      const attachment = new AttachmentBuilder(buffer, { name: 'script.lua' });
-      messageOptions.files = [attachment];
-    }
-
-    return channel.send(messageOptions);
-  } catch (error) {
-    console.error('Erro ao enviar para o Discord:', error);
+    console.error('Erro ao obter whitelist:', error.message);
     throw error;
   }
 }
@@ -99,7 +79,7 @@ app.post('/submit', async (req, res) => {
   const { username, script } = req.body;
 
   if (!username || !script) {
-    return res.status(400).json({ status: 'error', message: 'Dados incompletos' });
+    return res.status(400).json({ status: 'error', message: 'Usuário ou script ausente' });
   }
 
   try {
@@ -107,30 +87,30 @@ app.post('/submit', async (req, res) => {
     if (response.status === 200) {
       res.json({ status: 'success', message: 'Script enviado com sucesso!' });
     } else {
-      res.status(500).json({ status: 'error', message: 'Falha ao enviar script' });
+      res.status(500).json({ status: 'error', message: 'Falha ao enviar script para o servidor' });
     }
   } catch (error) {
-    console.error('Erro ao enviar script:', error);
+    console.error('Erro ao enviar script:', error.message);
     res.status(500).json({ status: 'error', message: 'Erro interno ao enviar script' });
   }
 });
 
-// Rota para verificar usuário
+// Rota para verificar o usuário
 app.get('/verify/:username', async (req, res) => {
   const username = req.params.username.toLowerCase();
-  
+
   try {
     const whitelist = await getWhitelistFromGitHub();
     const foundUser = whitelist.find(user => user.User.toLowerCase() === username);
 
     if (!foundUser) {
-      return res.status(404).json({ status: 'error', message: 'Usuário não encontrado' });
+      return res.status(404).json({ status: 'error', message: 'Usuário não encontrado na whitelist' });
     }
 
     res.json({ status: 'success', data: foundUser });
   } catch (error) {
-    console.error('Erro na verificação:', error);
-    res.status(500).json({ status: 'error', message: 'Erro interno' });
+    console.error('Erro na verificação:', error.message);
+    res.status(500).json({ status: 'error', message: 'Erro interno ao verificar usuário' });
   }
 });
 
@@ -152,13 +132,22 @@ app.get('/download/:assetId', (req, res) => {
 
 // Rota raiz
 app.get('/', (req, res) => {
-  res.sendFile('index.html', { root: './public' });
+  res.json({ status: 'success', message: 'API do Lua Executor está ativa!' });
 });
 
 // Evento de inicialização do Discord
 discordClient.on('ready', () => {
-  console.log(`Bot ${discordClient.user.tag} iniciado`);
+  console.log(`Bot conectado como ${discordClient.user.tag}`);
   discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
+});
+
+// Tratamento de erros gerais
+process.on('unhandledRejection', error => {
+  console.error('Erro não tratado:', error.message);
+});
+
+process.on('uncaughtException', error => {
+  console.error('Exceção não capturada:', error.message);
 });
 
 // Inicialização do servidor
@@ -171,6 +160,6 @@ app.listen(PORT, () => {
 discordClient.login(config.DISCORD_BOT_TOKEN)
   .then(() => console.log('Bot conectado com sucesso'))
   .catch(error => {
-    console.error('Erro ao conectar o bot:', error);
+    console.error('Erro ao conectar o bot:', error.message);
     process.exit(1);
   });
