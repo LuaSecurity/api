@@ -6,7 +6,6 @@ const cors = require('cors');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
 const { Client, GatewayIntentBits } = require('discord.js');
-const rateLimit = require('express-rate-limit');
 
 const app = express();
 
@@ -58,14 +57,6 @@ app.get('/health', (req, res) => {
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-
-// Rate Limiting
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: { status: 'error', message: 'Too many requests, please try again later.' }
-});
-app.use(limiter);
 
 // Discord Bot Initialization
 discordClient.on('ready', () => {
