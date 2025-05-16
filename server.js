@@ -38,6 +38,9 @@ const discordClient = new Client({
   ] 
 });
 
+// In-memory queue storage
+const scriptQueues = new Map();
+
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' }));
 
@@ -131,7 +134,6 @@ async function sendToDiscordChannel(embedData, scriptContent = null) {
       const attachment = new AttachmentBuilder(buffer, { name: 'script.lua' });
       messageOptions.files = [attachment];
       
-      // For large scripts, show a message in the embed
       if (scriptContent.length > 100) {
         embedData.description = embedData.description.replace(
           /```lua\n[\s\S]*?\n```/, 
@@ -256,7 +258,44 @@ async function handleScriptDownload(interaction) {
   }
 }
 
-// Routes
+// Queue Endpoints
+app.post('/queue/:username', (req, res) => {
+  const username = req.params.username.toLowerCase();
+  const scriptData = req.body;
+
+  if (!Array.isArray(scriptData)) {
+    return res.status(400).json({ status: 'error', message: 'Expected an array of script objects' });
+  }
+
+  // Store the scripts in the queue
+  scriptQueues.set(username, scriptData);
+  
+  res.status(200).json({ 
+    status: 'success', 
+    message: `Scripts queued for ${username}`,
+    count: scriptData.length
+  });
+});
+
+app.get('/queue/:username', (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(403).json({ status: 'error', message: 'Roblox access only' });
+  }
+
+  const username = req.params.username.toLowerCase();
+  const scripts = scriptQueues.get(username);
+
+  if (!scripts || scripts.length === 0) {
+    return res.status(404).json({ status: 'error', message: 'No scripts found for this user' });
+  }
+
+  // Remove the scripts from queue after retrieval
+  scriptQueues.delete(username);
+  
+  res.status(200).json(scripts);
+});
+
+// Existing Routes
 app.get('/', (req, res) => {
   res.status(403).json({ status: 'error', message: 'Access denied' });
 });
