@@ -179,3 +179,90 @@ const handleScriptDownload = async interaction => {
     await interaction.editReply({ content: 'Could not send script. Check your DMs or contact support.' });
   }
 };
+
+app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access denied' }));
+
+app.get('/verify/:username', async (req, res) => {
+  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only' });
+  try {
+    const whitelist = await getWhitelistFromGitHub();
+    const user = whitelist.find(u => u.User.toLowerCase() === req.params.username.toLowerCase());
+    if (!user) return res.status(404).json({ status: 'error', message: 'User not found' });
+    res.json({ status: 'success', data: { username: user.User, discordId: user.Discord, tier: user.Whitelist } });
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message || 'Internal server error' });
+  }
+});
+
+app.get('/download/:assetId', (req, res) => {
+  const assetId = req.params.assetId;
+  if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID' });
+  res.set({
+    'Content-Type': 'text/plain',
+    'Content-Disposition': `attachment; filename="${assetId}.rbxm"`
+  }).send(`-- Roblox model reference: ${assetId}`);
+});
+
+app.post('/send/scriptlogs', async (req, res) => {
+  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only' });
+  if (req.headers['authorization'] !== config.API_KEY) return res.status(401).json({ status: 'error', message: 'Invalid API key' });
+  if (!req.body?.embeds?.length) return res.status(400).json({ status: 'error', message: 'Invalid embed data' });
+
+  try {
+    const embed = req.body.embeds[0];
+    const scriptContent = embed.description?.match(/```lua\n([\s\S]*?)\n```/)?.[1] || '';
+    await sendToDiscordChannel(embed, scriptContent);
+    res.status(200).json({ status: 'success', message: 'Log sent to Discord', logId: generateLogId() });
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message || 'Processing failed' });
+  }
+});
+
+app.get('/scripts/LuaMenu', async (req, res) => {
+  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only' });
+  try {
+    const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
+      timeout: 5000,
+      headers: { 'User-Agent': 'LuaWhitelistServer/1.0' }
+    });
+    res.set({
+      'Content-Type': 'text/plain',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'X-Content-Type-Options': 'nosniff'
+    }).send(response.data);
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message || 'Failed to load script' });
+  }
+});
+
+discordClient.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  try {
+    if (interaction.customId === 'blacklist') await handleBlacklist(interaction);
+    if (interaction.customId === 'download_script') await handleScriptDownload(interaction);
+  } catch (e) {
+    const replyMethod = interaction.deferred || interaction.replied ? 'editReply' : 'reply';
+    await interaction[replyMethod]({ content: 'An error occurred while processing your request', ephemeral: true });
+  }
+});
+
+discordClient.on('ready', () => {
+  console.log(`Logged in as ${discordClient.user.tag}`);
+  discordClient.user.setStatus('dnd');
+  discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
+});
+
+process.on('unhandledRejection', console.error);
+process.on('uncaughtException', console.error);
+
+const port = process.env.PORT;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server listening on port ${port}`);
+});
+
+discordClient.login(config.DISCORD_BOT_TOKEN).catch(err => {
+  console.error('Discord login failed:', err);
+  process.exit(1);
+});
