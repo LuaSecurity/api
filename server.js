@@ -1,28 +1,40 @@
-// Load environment variables
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 
-const app = express();
+// Validate required environment variables
+['API_KEY', 'GITHUB_TOKEN', 'DISCORD_BOT_TOKEN', 'GITHUB_LUA_MENU_URL'].forEach(key => {
+  if (!process.env[key]) {
+    console.error(`Missing environment variable: ${key}`);
+    process.exit(1);
+  }
+});
 
-// Configurations
+// Configuration
 const config = {
-  API_KEY: process.env.API_KEY,
-  GITHUB_TOKEN: process.env.GITHUB_TOKEN,
-  DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
-  GITHUB_REPO: 'RelaxxxX-Lab/Lua-things',
-  GITHUB_BRANCH: 'main',
-  WHITELIST_PATH: 'Whitelist.json',
-  BLACKLIST_PATH: 'Blacklist.json',
-  PORT: process.env.PORT || 3000,
-  LOG_CHANNEL_ID: '1331021897735081984'
+  apiKey: process.env.API_KEY,
+  githubToken: process.env.GITHUB_TOKEN,
+  discordToken: process.env.DISCORD_BOT_TOKEN,
+  githubLuaMenuUrl: process.env.GITHUB_LUA_MENU_URL,
+  logChannelId: '1331021897735081984',
+  githubRepo: 'RelaxxxX-Lab/Lua-things',
+  githubBranch: 'main',
+  whitelistPath: 'Whitelist.json',
+  roles: {
+    standard: '1330552089759191064',
+    premium: '1333286640248029264',
+    ultimate: '1337177751202828300'
+  }
 };
 
-// Initialize Discord bot
+// Initialize services
+const app = express();
+const octokit = new Octokit({ auth: config.githubToken });
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -32,140 +44,123 @@ const discordClient = new Client({
   ]
 });
 
-// Initialize Octokit for GitHub API
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
+// Middleware
+app.use(cors());
+app.use(bodyParser.json({ limit: '10mb' }));
 
-// Logging function
-function logMessage(level, message) {
-  console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}]: ${message}`);
-}
-
-// Generate unique log ID
+// Utility: Log ID generator
 function generateLogId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-// Input validation function
-function validateUsername(username) {
-  return typeof username === 'string' && /^[a-zA-Z0-9_]+$/.test(username);
+// Utility: Roblox request check
+function isFromRoblox(req) {
+  return (req.headers['user-agent'] || '').includes('Roblox');
 }
 
-// Send Discord embed log
-async function sendEmbedLog(title, description, color = 0x0099ff) {
-  try {
-    const embed = new EmbedBuilder()
-      .setTitle(title)
-      .setDescription(description)
-      .setColor(color)
-      .setTimestamp();
-
-    const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-    if (channel) await channel.send({ embeds: [embed] });
-  } catch (error) {
-    logMessage('error', `Failed to send embed log: ${error.message}`);
-  }
-}
-
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-
-// Health Check Route
-app.get('/health', (req, res) => {
-  res.json({ status: 'success', message: 'API is running smoothly!' });
-});
-
-// Fetch whitelist from GitHub
-async function getWhitelist() {
+// Utility: Fetch whitelist from GitHub
+async function fetchWhitelist() {
   try {
     const { data } = await octokit.rest.repos.getContent({
-      owner: config.GITHUB_REPO.split('/')[0],
-      repo: config.GITHUB_REPO.split('/')[1],
-      path: config.WHITELIST_PATH,
-      ref: config.GITHUB_BRANCH,
+      owner: config.githubRepo.split('/')[0],
+      repo: config.githubRepo.split('/')[1],
+      path: config.whitelistPath,
+      ref: config.githubBranch,
       headers: { 'Accept': 'application/vnd.github.v3.raw' }
     });
-    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
+
+    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+    return JSON.parse(content);
   } catch (error) {
-    logMessage('error', `Failed to fetch whitelist: ${error.message}`);
-    throw new Error('Unable to retrieve whitelist');
+    console.error('[GitHub] Error fetching whitelist:', error.message);
+    throw new Error('Failed to fetch whitelist');
   }
 }
 
-// Fetch blacklist from GitHub
-async function getBlacklist() {
-  try {
-    const { data } = await octokit.rest.repos.getContent({
-      owner: config.GITHUB_REPO.split('/')[0],
-      repo: config.GITHUB_REPO.split('/')[1],
-      path: config.BLACKLIST_PATH,
-      ref: config.GITHUB_BRANCH,
-      headers: { 'Accept': 'application/vnd.github.v3.raw' }
-    });
-    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
-  } catch (error) {
-    logMessage('error', `Failed to fetch blacklist: ${error.message}`);
-    return [];
-  }
-}
-
-// Submit Script Route
+// POST /submit — Submit script to executor
 app.post('/submit', async (req, res) => {
   const { username, script } = req.body;
-  if (!validateUsername(username) || typeof script !== 'string') {
-    return res.status(400).json({ status: 'error', message: 'Invalid username or script' });
+
+  if (!username || !script) {
+    return res.status(400).json({ status: 'error', message: 'Missing username or script' });
   }
 
   try {
-    const blacklist = await getBlacklist();
-    if (blacklist.includes(username)) {
-      await sendEmbedLog('Blacklisted User Attempt', `User: **${username}** tried to submit a script`, 0xff0000);
-      return res.status(403).json({ status: 'error', message: 'User is blacklisted' });
+    const response = await axios.post(`https://luaserverside.onrender.com/queue/${username}`, { script });
+
+    if (response.status === 200) {
+      return res.json({ status: 'success', message: 'Script successfully submitted!' });
     }
 
-    const response = await axios.post(`https://luaserverside.onrender.com/queue/${username}`, { script });
-    if (response.status === 200) {
-      await sendEmbedLog('Script Submission', `User: **${username}** submitted a script successfully.`);
-      res.json({ status: 'success', message: 'Script successfully submitted!' });
-    } else {
-      throw new Error('Failed to submit script');
-    }
+    throw new Error(`Unexpected response status: ${response.status}`);
   } catch (error) {
-    logMessage('error', `Script submission error: ${error.message}`);
-    res.status(500).json({ status: 'error', message: 'Internal server error' });
+    console.error('[Script Submit] Error:', error.message);
+    return res.status(500).json({ status: 'error', message: 'Failed to submit script' });
   }
 });
 
-// Discord Bot Event: Ready
-discordClient.on('ready', () => {
-  logMessage('info', `Bot logged in as ${discordClient.user.tag}`);
-  discordClient.user.setActivity('Managing Whitelist', { type: 'WATCHING' });
+// GET /verify/:username — Check if user is in whitelist
+app.get('/verify/:username', async (req, res) => {
+  const username = req.params.username.toLowerCase();
+
+  try {
+    const whitelist = await fetchWhitelist();
+    const user = whitelist.find(entry => entry.User.toLowerCase() === username);
+
+    if (!user) {
+      return res.status(404).json({ status: 'error', message: 'User not found in whitelist' });
+    }
+
+    return res.json({ status: 'success', data: user });
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'Verification failed' });
+  }
 });
 
-// Handle Discord Bot Disconnection
-discordClient.on('disconnect', () => {
-  logMessage('warn', 'Bot disconnected, attempting to reconnect...');
-  discordClient.login(config.DISCORD_BOT_TOKEN).catch(err => {
-    logMessage('error', `Reconnection failed: ${err.message}`);
-  });
+// GET /download/:assetId — Download placeholder file
+app.get('/download/:assetId', (req, res) => {
+  const assetId = req.params.assetId;
+
+  if (!/^\d+$/.test(assetId)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid asset ID' });
+  }
+
+  const filename = `${assetId}.rbxm`;
+  const content = `-- Roblox model reference: ${assetId}`;
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(content);
 });
 
-// Start Server
-app.listen(config.PORT, () => {
-  logMessage('info', `Server running on port ${config.PORT}`);
+// Root route
+app.get('/', (req, res) => {
+  return res.json({ status: 'success', message: 'Lua Executor API is online' });
 });
 
-// Login to Discord
-discordClient.login(config.DISCORD_BOT_TOKEN).catch(error => {
-  logMessage('error', `Discord login failed: ${error.message}`);
+// Discord bot events
+discordClient.once('ready', () => {
+  console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
+  discordClient.user.setActivity('Whitelist Manager', { type: 'WATCHING' });
+});
+
+// Error handling
+process.on('unhandledRejection', err => {
+  console.error('[Unhandled Rejection]', err);
+});
+
+process.on('uncaughtException', err => {
+  console.error('[Uncaught Exception]', err);
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`[Server] Running on port ${PORT}`);
+});
+
+// Discord login
+discordClient.login(config.discordToken).catch(error => {
+  console.error('[Discord] Failed to login:', error.message);
   process.exit(1);
-});
-
-// Error Handlers
-process.on('unhandledRejection', error => {
-  logMessage('error', `Unhandled rejection: ${error.message}`);
-});
-
-process.on('uncaughtException', error => {
-  logMessage('error', `Uncaught exception: ${error.message}`);
 });
