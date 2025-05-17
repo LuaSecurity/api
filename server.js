@@ -172,45 +172,48 @@ res.send(`
 
     .script-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 20px;
       margin-top: 20px;
     }
 
     .script-card {
-      background: #1b1b1b;
-      border: 1px solid #2d2d2d;
-      border-radius: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
       padding: 20px;
+      position: relative;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 0 20px rgba(0,0,0,0.4);
       transition: all 0.3s ease;
-      cursor: pointer;
     }
 
     .script-card:hover {
-      background: #272727;
-      transform: scale(1.03);
       border-color: #8e2de2;
+      transform: translateY(-4px);
     }
 
     .script-card h3 {
       font-size: 18px;
       margin-bottom: 10px;
-      color: #ddd;
+      color: #eee;
     }
 
-    .button {
-      padding: 12px 20px;
+    .run-btn {
       background: linear-gradient(90deg, #8e2de2, #4a00e0);
-      color: white;
-      font-weight: bold;
       border: none;
       border-radius: 8px;
+      padding: 10px 16px;
+      color: white;
+      font-weight: bold;
       cursor: pointer;
-      margin-top: 20px;
-      transition: background 0.3s ease;
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      transition: 0.3s;
     }
 
-    .button:hover {
+    .run-btn:hover {
       background: linear-gradient(90deg, #4a00e0, #8e2de2);
     }
 
@@ -228,6 +231,12 @@ res.send(`
       font-size: 14px;
       white-space: pre-wrap;
     }
+
+    .card-desc {
+      font-size: 13px;
+      color: #aaa;
+      margin-top: 8px;
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
 </head>
@@ -237,8 +246,7 @@ res.send(`
       <h1>Lua Panel</h1>
       <a class="nav-link active" href="#" onclick="showTab('dashboard', this)">Dashboard</a>
       <a class="nav-link" href="#" onclick="showTab('executor', this)">Executor</a>
-      <a class="nav-link" href="#" onclick="showTab('scripthub', this)">Script Hub</a>
-      <a class="nav-link" href="#" onclick="showTab('pricing', this)">Pricing</a>
+      <a class="nav-link" href="/pricing">Pricing</a>
     </div>
     <div class="content">
       <div id="dashboard" class="tabs active">
@@ -249,27 +257,19 @@ res.send(`
       <div id="executor" class="tabs">
         <h2>Script Executor</h2>
         <div id="editor">// Write or load a Lua script here</div>
-        <button class="button" onclick="executeScript()">Execute</button>
+        <button class="run-btn" onclick="executeScript()">Execute</button>
         <div id="response"></div>
-      </div>
 
-      <div id="scripthub" class="tabs">
-        <h2>Script Hub</h2>
+        <h2 style="margin-top: 40px;">Script Hub</h2>
         <div class="script-grid">
           ${scripts.map(script => `
-            <div class="script-card" onclick="loadScript(\`${script.Script.replace(/Username/g, username)}\`)">
+            <div class="script-card">
               <h3>${script.Name}</h3>
-              <p>Click to load into executor</p>
+              <div class="card-desc">Click Run to queue instantly</div>
+              <button class="run-btn" onclick="queueScript(\`${script.Script.replace(/Username/g, username)}\`)">Run</button>
             </div>
           `).join('')}
         </div>
-      </div>
-
-      <div id="pricing" class="tabs">
-        <h2>Pricing Tiers</h2>
-        <p><strong>Standard:</strong> Basic access to community features.</p>
-        <p><strong>Premium:</strong> Unlock premium hubs and exclusive scripts.</p>
-        <p><strong>Ultimate:</strong> Full access, all scripts, priority support.</p>
       </div>
     </div>
   </div>
@@ -287,8 +287,14 @@ res.send(`
       });
     });
 
-    function loadScript(code) {
-      if (editor) editor.setValue(code);
+    function queueScript(code) {
+      fetch('/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: code })
+      })
+      .then(r => r.json())
+      .then(d => alert(d.message || 'Script queued!'));
     }
 
     function executeScript() {
@@ -312,6 +318,257 @@ res.send(`
 </body>
 </html>
 `);
+});
+
+app.get('/pricing', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pricing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; font-family: 'Inter', sans-serif; background: #0b0b0c; color: #fff; }
+    .header { padding: 40px 20px; text-align: center; }
+    .header h1 { font-size: 42px; margin-bottom: 10px; }
+    .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 30px; max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    .plan { background: #161616; border: 1px solid #2c2c2c; border-radius: 12px; padding: 30px 20px; transition: 0.3s; }
+    .plan:hover { border-color: #8e2de2; transform: scale(1.03); }
+    .plan h2 { font-size: 24px; margin-bottom: 10px; }
+    .plan p { font-size: 14px; color: #aaa; margin: 10px 0; }
+    .price { font-size: 28px; font-weight: bold; margin: 20px 0; }
+    .button { background: linear-gradient(90deg, #8e2de2, #4a00e0); padding: 12px 20px; border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
+    .button:hover { background: linear-gradient(90deg, #4a00e0, #8e2de2); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Choose Your Plan</h1>
+    <p>Upgrade your experience with premium access and exclusive scripts.</p>
+  </div>
+  <div class="plans">
+    <div class="plan">
+      <h2>Standard</h2>
+      <div class="price">Free</div>
+      <p>✅ Community access</p>
+      <p>✅ Basic scripts</p>
+      <p>🚫 No exclusive features</p>
+      <a class="button" href="/">Get Started</a>
+    </div>
+    <div class="plan">
+      <h2>Premium</h2>
+      <div class="price">$9.99/mo</div>
+      <p>✅ Premium scripts</p>
+      <p>✅ Role-based features</p>
+      <p>✅ Faster queue</p>
+      <a class="button" href="/">Upgrade Now</a>
+    </div>
+    <div class="plan">
+      <h2>Ultimate</h2>
+      <div class="price">$19.99/mo</div>
+      <p>✅ All scripts unlocked</p>
+      <p>✅ Top-tier support</p>
+      <p>✅ Custom script requests</p>
+      <a class="button" href="/">Go Ultimate</a>
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lua Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; font-family: 'Inter', sans-serif; background: #0c0c0c; color: white; }
+    header { text-align: center; padding: 80px 20px; background: linear-gradient(90deg, #8e2de2, #4a00e0); }
+    header h1 { font-size: 42px; margin-bottom: 10px; }
+    header p { font-size: 18px; color: #eee; }
+    .cta { margin-top: 30px; }
+    .cta a { text-decoration: none; background: white; color: #4a00e0; padding: 14px 24px; font-weight: bold; border-radius: 8px; display: inline-block; transition: 0.3s ease; }
+    .cta a:hover { background: #ddd; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 30px; padding: 60px 40px; max-width: 1100px; margin: auto; }
+    .feature { background: #161616; padding: 30px; border-radius: 12px; border: 1px solid #2d2d2d; transition: 0.3s ease; }
+    .feature:hover { border-color: #8e2de2; }
+    footer { text-align: center; padding: 30px; font-size: 14px; color: #aaa; background: #111; }
+    footer a { color: #aaa; text-decoration: none; }
+    footer a:hover { color: white; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Lua Panel</h1>
+    <p>Run scripts. Control your access. All via Discord.</p>
+    <div class="cta">
+      <a href="/executor">Enter Control Panel</a>
+    </div>
+  </header>
+
+  <section class="features">
+    <div class="feature">
+      <h3>Premium Scripts</h3>
+      <p>Access a variety of exclusive and optimized scripts with Discord-based control.</p>
+    </div>
+    <div class="feature">
+      <h3>Advanced Control</h3>
+      <p>Execute scripts safely and directly through your personal panel.</p>
+    </div>
+    <div class="feature">
+      <h3>Access Upgrades</h3>
+      <p>Upgrade to Premium or Ultimate plans to unlock full potential.</p>
+    </div>
+  </section>
+
+  <footer>
+    &copy; ${new Date().getFullYear()} Lua Panel · <a href="/pricing">Pricing</a> · <a href="/tos">Terms</a>
+  </footer>
+</body>
+</html>`);
+});
+
+app.get('/tos', (req, res) => {
+  res.send(`
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Terms of Service | Lua Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --gradient: linear-gradient(90deg, #8e2de2, #4a00e0);
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Inter', sans-serif;
+        background: #0c0c0c;
+        color: #f5f5f5;
+        line-height: 1.7;
+        padding-bottom: 80px;
+      }
+
+      .hero {
+        text-align: center;
+        padding: 80px 20px 40px;
+        background: #0f0f11;
+        border-bottom: 1px solid #1f1f1f;
+      }
+
+      .hero h1 {
+        font-size: 42px;
+        background: var(--gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800;
+        margin-bottom: 12px;
+      }
+
+      .hero p {
+        color: #bbb;
+        font-size: 18px;
+      }
+
+      .content {
+        max-width: 900px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+
+      .section {
+        margin-bottom: 50px;
+      }
+
+      .section h2 {
+        font-size: 26px;
+        color: #ffffff;
+        margin-bottom: 10px;
+        border-left: 4px solid #8e2de2;
+        padding-left: 12px;
+      }
+
+      .section p {
+        color: #ccc;
+        font-size: 16px;
+        margin-top: 10px;
+      }
+
+      .section p a {
+        color: #9b5de5;
+        text-decoration: underline;
+      }
+
+      footer {
+        text-align: center;
+        color: #666;
+        padding: 30px 10px;
+        border-top: 1px solid #1a1a1a;
+        font-size: 14px;
+      }
+
+      @media (max-width: 600px) {
+        .hero h1 {
+          font-size: 32px;
+        }
+
+        .section h2 {
+          font-size: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="hero">
+      <h1>Terms of Service</h1>
+      <p>Updated May 2025 • Your agreement with Lua Panel</p>
+    </section>
+
+    <main class="content">
+      <div class="section">
+        <h2>1. Platform Usage</h2>
+        <p>By using Lua Panel, you agree to our policies, limitations, and access rules. This platform is integrated with Discord authentication and only whitelisted users are allowed.</p>
+      </div>
+
+      <div class="section">
+        <h2>2. Scripts & Content</h2>
+        <p>All scripts and files provided are for educational and demonstrational use. Redistribution or commercial use without permission is strictly prohibited.</p>
+      </div>
+
+      <div class="section">
+        <h2>3. Subscription Plans</h2>
+        <p>Premium and Ultimate tiers unlock exclusive access. Subscriptions are recurring and non-refundable unless explicitly stated otherwise.</p>
+      </div>
+
+      <div class="section">
+        <h2>4. Data & Security</h2>
+        <p>All accounts are tied to your Discord ID. Lua Panel does not store passwords or personal data outside what's required for functionality (cookies, IDs, and roles).</p>
+      </div>
+
+      <div class="section">
+        <h2>5. Modifications</h2>
+        <p>We reserve the right to update these terms at any time. Changes will be posted on this page. Continued usage of the panel constitutes acceptance of the updated terms.</p>
+      </div>
+
+      <div class="section">
+        <h2>6. Contact & Support</h2>
+        <p>If you have any questions about these terms, please contact our team via <a href="https://discord.gg/YOURSERVER" target="_blank">Discord</a>.</p>
+      </div>
+    </main>
+
+    <footer>
+      &copy; ${new Date().getFullYear()} Lua Panel. All rights reserved.
+    </footer>
+  </body>
+  </html>
+  `);
 });
 
 app.post('/queue', async (req, res) => {
