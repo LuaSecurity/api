@@ -4,6 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const { Octokit } = require('@octokit/rest');
 const {
   Client,
@@ -37,7 +38,7 @@ const config = {
 };
 
 const app = express();
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 5000 } });
+const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -47,8 +48,9 @@ const discordClient = new Client({
   ]
 });
 
-let userQueues = {}; // In-memory queue
+const userQueues = {};
 app.use(cors());
+app.use(cookieParser());
 app.use(bodyParser.json({ limit: '100mb' }));
 
 const getWhitelistFromGitHub = async () => {
@@ -75,67 +77,89 @@ const getScriptsFromGitHub = async () => {
   return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
 };
 
+app.get('/callback', async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).send('Missing code');
+  try {
+    const tokenRes = await axios.post(
+      'https://discord.com/api/oauth2/token',
+      new URLSearchParams({
+        client_id: config.BOT_CLIENT_ID,
+        client_secret: config.BOT_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: config.REDIRECT_URI,
+        scope: 'identify'
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    const accessToken = tokenRes.data.access_token;
+    const userRes = await axios.get('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    res.cookie('discord_id', userRes.data.id, { httpOnly: true, maxAge: 86400000 });
+    res.redirect('/executor');
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('OAuth2 authentication failed');
+  }
+});
+
 app.get('/executor', async (req, res) => {
-  const oauthURL = `https://discord.com/api/oauth2/authorize?client_id=${config.BOT_CLIENT_ID}&redirect_uri=${encodeURIComponent(config.REDIRECT_URI)}&response_type=code&scope=identify`;
+  const discordId = req.cookies.discord_id;
+  if (!discordId) return res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${config.BOT_CLIENT_ID}&redirect_uri=${encodeURIComponent(config.REDIRECT_URI)}&response_type=code&scope=identify`);
+
+  const whitelist = await getWhitelistFromGitHub();
+  const entry = whitelist.find(u => u.Discord === discordId);
+  if (!entry) return res.status(403).send('You are not whitelisted');
+
+  const username = entry.User;
   const scripts = await getScriptsFromGitHub();
-  const scriptButtons = scripts.map(script => `<option value="${script.Script}">${script.Name}</option>`).join('');
+  const scriptOptions = scripts.map(s => `<option value="${s.Script.replace(/Username/g, username)}">${s.Name}</option>`).join('');
 
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
-      <meta charset="UTF-8" />
-      <title>Lua Executor</title>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Lua Script Hub</title>
       <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0e1013; color: #eaeaea; margin: 0; padding: 0; }
-        header { display: flex; justify-content: space-between; align-items: center; background: #1f2937; padding: 15px 30px; }
-        header h1 { margin: 0; font-size: 24px; }
-        header a { color: white; background: #5865F2; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; }
-        main { padding: 40px 30px; max-width: 960px; margin: auto; }
-        select, textarea, button { width: 100%; font-size: 16px; border-radius: 6px; border: none; margin-top: 10px; }
-        textarea { height: 300px; background: #1e1e1e; color: #fff; padding: 12px; font-family: monospace; resize: vertical; }
-        button { padding: 12px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f10; color: #fff; }
+        header { padding: 20px; background: #1e1e1f; text-align: center; font-size: 24px; font-weight: bold; }
+        main { padding: 30px; max-width: 800px; margin: auto; }
+        select, textarea, button { width: 100%; font-size: 16px; margin-top: 15px; border-radius: 6px; border: none; padding: 12px; }
+        select, textarea { background: #1a1a1c; color: #fff; }
+        button { background: #3b82f6; color: white; font-weight: bold; cursor: pointer; transition: background 0.2s; }
         button:hover { background: #2563eb; }
-        #response { margin-top: 20px; font-size: 14px; color: limegreen; white-space: pre-wrap; }
+        #response { margin-top: 20px; font-size: 14px; color: lime; white-space: pre-wrap; }
       </style>
     </head>
     <body>
-      <header>
-        <h1>Lua Script Executor</h1>
-        <a href="${oauthURL}">Login with Discord</a>
-      </header>
+      <header>Welcome, ${username}</header>
       <main>
-        <label for="scriptHub">Script Hub:</label>
-        <select id="scriptHub" onchange="loadScript(this.value)">
-          <option value="">-- Select a script --</option>
-          ${scriptButtons}
+        <label for="hub">Select a script:</label>
+        <select id="hub" onchange="document.getElementById('script').value = this.value">
+          <option value="">-- Choose --</option>
+          ${scriptOptions}
         </select>
-        <textarea id="script" placeholder="Write or select a script..."></textarea>
-        <button onclick="sendScript()">Execute</button>
+        <textarea id="script" placeholder="Lua script will appear here..."></textarea>
+        <button onclick="executeScript()">Execute</button>
         <div id="response"></div>
       </main>
       <script>
-        function loadScript(code) {
-          if (code.includes('Username')) {
-            fetch('/whitelist-username').then(r => r.text()).then(username => {
-              document.getElementById('script').value = code.replace(/Username/g, username);
-            });
-          } else {
-            document.getElementById('script').value = code;
-          }
-        }
-        function sendScript() {
+        function executeScript() {
           const script = document.getElementById('script').value;
-          if (!script) return alert("Script field is empty.");
+          if (!script) return alert("Please select or write a script.");
           fetch('/queue', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ script })
           })
-          .then(res => res.json())
-          .then(data => {
-            document.getElementById('response').innerText = data.message || 'Script queued successfully';
-          });
+          .then(r => r.json())
+          .then(d => document.getElementById('response').innerText = d.message);
         }
       </script>
     </body>
@@ -144,29 +168,32 @@ app.get('/executor', async (req, res) => {
 });
 
 app.post('/queue', async (req, res) => {
-  const script = req.body?.script;
-  if (!script) return res.status(400).json({ status: 'error', message: 'No script provided' });
+  const discordId = req.cookies.discord_id;
+  if (!discordId) return res.status(401).json({ message: 'Not authenticated' });
   const whitelist = await getWhitelistFromGitHub();
-  const username = whitelist[0]?.User || 'Guest';
+  const entry = whitelist.find(u => u.Discord === discordId);
+  if (!entry) return res.status(403).json({ message: 'You are not whitelisted' });
+
+  const script = req.body?.script;
+  if (!script) return res.status(400).json({ message: 'No script provided' });
+  const username = entry.User;
   if (!userQueues[username]) userQueues[username] = [];
   userQueues[username].push({ script });
-  res.status(200).json({ status: 'success', message: 'Script added to queue for ' + username });
+  res.status(200).json({ message: 'Script queued for ' + username });
 });
 
 app.get('/queue', async (req, res) => {
+  const discordId = req.cookies.discord_id;
+  if (!discordId) return res.status(401).type('text/plain').send('');
   const whitelist = await getWhitelistFromGitHub();
-  const username = whitelist[0]?.User;
+  const entry = whitelist.find(u => u.Discord === discordId);
+  if (!entry) return res.status(403).type('text/plain').send('');
+  const username = entry.User;
   const queue = userQueues[username];
   if (!queue || queue.length === 0) return res.type('text/plain').send('');
   const nextScript = queue.shift();
   if (queue.length === 0) delete userQueues[username];
   res.type('text/plain').send(nextScript.script);
-});
-
-app.get('/whitelist-username', async (req, res) => {
-  const whitelist = await getWhitelistFromGitHub();
-  const username = whitelist[0]?.User;
-  res.type('text/plain').send(username || 'Unknown');
 });
 
 const port = process.env.PORT || 3000;
