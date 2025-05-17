@@ -6,22 +6,12 @@ const crypto = require('crypto');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { Octokit } = require('@octokit/rest');
-const {
-  Client,
-  GatewayIntentBits,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder,
-  AttachmentBuilder
-} = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 
 const config = {
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
-  GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-  LOG_CHANNEL_ID: '1331021897735081984',
   GITHUB_REPO: 'RelaxxxX-Lab/Lua-things',
   GITHUB_BRANCH: 'main',
   WHITELIST_PATH: 'Whitelist.json',
@@ -42,8 +32,6 @@ const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers
   ]
 });
@@ -89,7 +77,7 @@ app.get('/callback', async (req, res) => {
         grant_type: 'authorization_code',
         code,
         redirect_uri: config.REDIRECT_URI,
-        scope: 'identify'
+        scope: 'identify email guilds guilds.members.read'
       }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
@@ -98,6 +86,13 @@ app.get('/callback', async (req, res) => {
     const userRes = await axios.get('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
+
+    const memberRes = await axios.get(`https://discord.com/api/users/@me/guilds/${config.SERVER_ID}/member`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    const hasAccess = memberRes.data.roles.some(role => Object.values(config.ROLES).includes(role));
+    if (!hasAccess) return res.status(403).send('Access denied: You do not have the required role in the server.');
 
     res.cookie('discord_id', userRes.data.id, { httpOnly: true, maxAge: 86400000 });
     res.redirect('/executor');
@@ -109,7 +104,7 @@ app.get('/callback', async (req, res) => {
 
 app.get('/executor', async (req, res) => {
   const discordId = req.cookies.discord_id;
-  if (!discordId) return res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${config.BOT_CLIENT_ID}&redirect_uri=${encodeURIComponent(config.REDIRECT_URI)}&response_type=code&scope=identify`);
+  if (!discordId) return res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${config.BOT_CLIENT_ID}&redirect_uri=${encodeURIComponent(config.REDIRECT_URI)}&response_type=code&scope=identify%20email%20guilds%20guilds.members.read`);
 
   const whitelist = await getWhitelistFromGitHub();
   const entry = whitelist.find(u => u.Discord === discordId);
@@ -125,34 +120,52 @@ app.get('/executor', async (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Lua Script Hub</title>
+      <title>Lua Executor Hub</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap">
       <style>
-        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f10; color: #fff; }
-        header { padding: 20px; background: #1e1e1f; text-align: center; font-size: 24px; font-weight: bold; }
-        main { padding: 30px; max-width: 800px; margin: auto; }
-        select, textarea, button { width: 100%; font-size: 16px; margin-top: 15px; border-radius: 6px; border: none; padding: 12px; }
-        select, textarea { background: #1a1a1c; color: #fff; }
-        button { background: #3b82f6; color: white; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-        button:hover { background: #2563eb; }
-        #response { margin-top: 20px; font-size: 14px; color: lime; white-space: pre-wrap; }
+        body { margin: 0; font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #101010, #2d0a52); color: #fff; display: flex; height: 100vh; overflow: hidden; }
+        aside { width: 250px; background: #151515; padding: 20px; border-right: 2px solid #2d0a52; display: flex; flex-direction: column; }
+        aside h2 { margin-top: 0; font-size: 20px; color: #ccc; }
+        aside select { margin-top: 10px; background: #202020; color: white; border: none; padding: 10px; border-radius: 5px; }
+        main { flex: 1; padding: 20px; display: flex; flex-direction: column; }
+        #editor { flex: 1; height: 100%; border-radius: 8px; border: 1px solid #333; overflow: hidden; }
+        button { margin-top: 15px; padding: 12px; background: #8e2de2; background: linear-gradient(90deg, #8e2de2, #4a00e0); color: white; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+        button:hover { opacity: 0.9; }
+        #response { margin-top: 15px; color: lime; font-size: 14px; white-space: pre-wrap; }
       </style>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
     </head>
     <body>
-      <header>Welcome, ${username}</header>
-      <main>
-        <label for="hub">Select a script:</label>
-        <select id="hub" onchange="document.getElementById('script').value = this.value">
-          <option value="">-- Choose --</option>
+      <aside>
+        <h2>Script Hub</h2>
+        <select id="hub" onchange="loadScript(this.value)">
+          <option value="">-- Choose a script --</option>
           ${scriptOptions}
         </select>
-        <textarea id="script" placeholder="Lua script will appear here..."></textarea>
+      </aside>
+      <main>
+        <div id="editor"></div>
         <button onclick="executeScript()">Execute</button>
         <div id="response"></div>
       </main>
       <script>
+        let editor;
+        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' }});
+        require(["vs/editor/editor.main"], function () {
+          editor = monaco.editor.create(document.getElementById("editor"), {
+            value: "-- Select or write your Lua script here",
+            language: "lua",
+            theme: "vs-dark",
+            fontSize: 16,
+            automaticLayout: true
+          });
+        });
+        function loadScript(code) {
+          if (editor) editor.setValue(code);
+        }
         function executeScript() {
-          const script = document.getElementById('script').value;
-          if (!script) return alert("Please select or write a script.");
+          const script = editor.getValue();
           fetch('/queue', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
