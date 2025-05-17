@@ -4,7 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType } = require('discord.js'); // Added ActivityType
 
 // Config from environment variables
 const config = {
@@ -13,22 +13,22 @@ const config = {
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
   LOG_CHANNEL_ID: '1331021897735081984',
-  GITHUB_REPO_OWNER: 'RelaxxxX-Lab',
-  GITHUB_REPO_NAME: 'Lua-things',
-  GITHUB_BRANCH: 'main',
-  WHITELIST_PATH: 'Whitelist.json',
+  GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab', // Defaulting to your values
+  GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',   // Defaulting to your values
+  GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
+  WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
   ROLES: {
     STANDARD: '1330552089759191064',
     PREMIUM: '1333286640248029264',
     ULTIMATE: '1337177751202828300'
   },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100 // New config for character limit
+  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100
 };
 
 // Validate essential config
 if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !config.GITHUB_LUA_MENU_URL) {
-  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file.');
+  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file or set them directly if not using .env for GITHUB_REPO_OWNER etc.');
   process.exit(1);
 }
 
@@ -71,7 +71,8 @@ async function getWhitelistFromGitHub() {
     });
     if (typeof data === 'string') return JSON.parse(data);
     if (data && data.content) return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
-    if (typeof data === 'object' && data !== null) return data;
+    if (typeof data === 'object' && data !== null) return data; // Should already be parsed by Octokit if raw isn't available
+    console.warn('Unexpected GitHub response format for getWhitelistFromGitHub:', data);
     throw new Error('Unexpected GitHub response format while fetching whitelist.');
   } catch (error) {
     console.error(`GitHub API Error (getWhitelistFromGitHub) for ${config.WHITELIST_PATH}:`, error.status, error.message);
@@ -80,7 +81,7 @@ async function getWhitelistFromGitHub() {
   }
 }
 
-async function updateWhitelistOnGitHub(newWhitelist) {
+async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') {
   try {
     const { data: fileData } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER,
@@ -92,19 +93,21 @@ async function updateWhitelistOnGitHub(newWhitelist) {
       owner: config.GITHUB_REPO_OWNER,
       repo: config.GITHUB_REPO_NAME,
       path: config.WHITELIST_PATH,
-      message: `Update whitelist via API (action: blacklist) - ${new Date().toISOString()}`,
+      message: `${actionMessage} - ${new Date().toISOString()}`,
       content: Buffer.from(JSON.stringify(newWhitelist, null, 2)).toString('base64'),
       sha: fileData.sha,
       branch: config.GITHUB_BRANCH
     });
-    return response.status === 200 || response.status === 201;
+    return response.status === 200 || response.status === 201; // 200 for update, 201 for create (though unlikely here)
   } catch (error) {
     console.error('GitHub API Error (updateWhitelistOnGitHub):', error.status, error.message);
     throw new Error('Failed to update whitelist on GitHub.');
   }
 }
 
-const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n[Full script content attached as a .lua file due to length.]\n```';
+const SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT = '[Full script content attached as a .lua file due to length.]';
+const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n' + SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT + '\n```';
+
 
 async function sendToDiscordChannel(embedData, fullScriptContent = null) {
   try {
@@ -114,28 +117,20 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
       throw new Error('Log channel not found.');
     }
 
-    const embed = new EmbedBuilder(embedData); // Convert plain object to EmbedBuilder instance
-    const messageOptions = { embeds: [embed], components: [] };
-    let scriptFileAttachment = null;
+    const embed = new EmbedBuilder(embedData);
+    const messageOptions = { embeds: [embed], components: [] }; // Initialize components array
 
-    // Decide whether to attach script as file or keep in embed
     if (fullScriptContent && fullScriptContent.trim().length > 0) {
       if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
-        // Script is long, attach as file and modify embed description
         const currentDescription = embed.data.description || '';
         embed.setDescription(
-          currentDescription.replace(
-            /```lua\n[\s\S]*?\n```/, // Regex to find the script block
-            SCRIPT_IN_ATTACHMENT_PLACEHOLDER
-          )
+          currentDescription.replace(/```lua\n[\s\S]*?\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER)
         );
         const buffer = Buffer.from(fullScriptContent, 'utf-8');
-        scriptFileAttachment = new AttachmentBuilder(buffer, { name: `script_log_${generateLogId()}.lua` });
+        const scriptFileAttachment = new AttachmentBuilder(buffer, { name: `script_log_${generateLogId()}.lua` });
         messageOptions.files = [scriptFileAttachment];
-      } else {
-        // Script is short, it's already in embed.data.description from the payload
-        // No change needed to embed description for script content itself
       }
+      // If script is short, it's already in embed.data.description, no changes needed here
     }
 
     const row = new ActionRowBuilder()
@@ -145,18 +140,17 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
           .setLabel('Blacklist User')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('download_script_from_log')
-          .setLabel('Download Script')
+          .setCustomId('get_asset_script_from_log') // New ID and Label
+          .setLabel('Get Asset/Script')
           .setStyle(ButtonStyle.Primary)
-          // Disable if there's truly no script content (e.g. if Lua somehow sent empty script)
-          .setDisabled(!fullScriptContent || fullScriptContent.trim().length === 0)
+          .setDisabled(!fullScriptContent || fullScriptContent.trim().length === 0) // Disable if no script at all
       );
-    messageOptions.components.push(row);
+    messageOptions.components.push(row); // Add the ActionRow with buttons
 
     return channel.send(messageOptions);
   } catch (error) {
     console.error('Discord sendToDiscordChannel error:', error);
-    // Don't re-throw, log and allow caller to proceed if non-critical
+    // Log and continue, don't let this break the primary request
   }
 }
 
@@ -170,10 +164,9 @@ async function handleBlacklist(interaction) {
     if (!embed || !embed.description) {
       return interaction.editReply({ content: 'Error: Could not find user information in the original message embed.' });
     }
-    // Regex updated to match bolded username from Lua script
-    const discordIdMatch = embed.description.match(/Discord: <@!?(\d+)>/);
-    const robloxUsernameMatch = embed.description.match(/\*\*Username:\*\* \*\*([^*]+)\*\*/);
 
+    const discordIdMatch = embed.description.match(/Discord: <@!?(\d+)>/);
+    const robloxUsernameMatch = embed.description.match(/\*\*Username:\*\* \*\*([^*]+)\*\*/); // Matches bolded username
 
     if (!discordIdMatch || !discordIdMatch[1]) {
       return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed.' });
@@ -182,124 +175,196 @@ async function handleBlacklist(interaction) {
     const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown Roblox User';
 
     let whitelist;
-    try { whitelist = await getWhitelistFromGitHub(); }
-    catch (ghError) { return interaction.editReply({ content: `Error fetching whitelist: ${ghError.message}` }); }
+    try {
+      whitelist = await getWhitelistFromGitHub();
+    } catch (ghError) {
+      return interaction.editReply({ content: `Error fetching whitelist: ${ghError.message}` });
+    }
 
-    const targetEntry = whitelist.find(entry => entry.Discord === targetUserId);
-    if (!targetEntry) return interaction.editReply({ content: `User <@${targetUserId}> (Roblox: ${robloxUsername}) not found in the whitelist.` });
+    const targetEntryIndex = whitelist.findIndex(entry => entry.Discord === targetUserId);
+    if (targetEntryIndex === -1) {
+      return interaction.editReply({ content: `User <@${targetUserId}> (Roblox: ${robloxUsername}) not found in the whitelist. They might have already been removed or were never added.` });
+    }
+    const targetEntry = whitelist[targetEntryIndex]; // Get the entry before removing
 
-    const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId);
-    try { await updateWhitelistOnGitHub(newWhitelist); }
-    catch (ghError) { return interaction.editReply({ content: `Error updating whitelist on GitHub: ${ghError.message}` }); }
+    const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId); // Create new array without the user
 
     try {
-      const guild = interaction.guild;
-      if (guild) {
-        const member = await guild.members.fetch(targetUserId).catch(() => null);
-        if (member) {
-          const rolesToRemoveIds = [config.ROLES.STANDARD, config.ROLES.PREMIUM, config.ROLES.ULTIMATE].filter(Boolean);
-          const rolesToRemove = rolesToRemoveIds.map(roleId => guild.roles.cache.get(roleId)).filter(role => role && member.roles.cache.has(role.id));
-          if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove, `Blacklisted by ${interaction.user.tag}`);
-        }
-      }
-    } catch (roleError) { console.error(`Role removal error for ${targetUserId}:`, roleError); }
+      await updateWhitelistOnGitHub(newWhitelist, `Blacklist user ${targetEntry.User} (${targetUserId}) by ${interaction.user.tag}`);
+    } catch (ghError) {
+      return interaction.editReply({ content: `Error updating whitelist on GitHub: ${ghError.message}. Please try again or check GitHub manually.` });
+    }
 
+    // Attempt to remove roles in Discord
+    let rolesRemovedMessage = "No roles to remove or user not in guild.";
+    try {
+      const guild = interaction.guild; // The guild where the interaction happened
+      if (guild) {
+        const member = await guild.members.fetch(targetUserId).catch(() => null); // Fetch fresh member object
+        if (member) {
+          const rolesToRemoveConfig = [config.ROLES.STANDARD, config.ROLES.PREMIUM, config.ROLES.ULTIMATE].filter(Boolean);
+          const rolesActuallyRemoved = [];
+
+          for (const roleId of rolesToRemoveConfig) {
+            if (member.roles.cache.has(roleId)) {
+              try {
+                await member.roles.remove(roleId, `Blacklisted by ${interaction.user.tag}`);
+                const role = guild.roles.cache.get(roleId);
+                rolesActuallyRemoved.push(role ? role.name : roleId);
+              } catch (roleRemoveError) {
+                console.warn(`Failed to remove role ${roleId} from ${targetUserId}:`, roleRemoveError);
+              }
+            }
+          }
+          if (rolesActuallyRemoved.length > 0) {
+            rolesRemovedMessage = `Removed roles: ${rolesActuallyRemoved.join(', ')}.`;
+          } else {
+            rolesRemovedMessage = "User had no relevant roles to remove.";
+          }
+        } else {
+          rolesRemovedMessage = `User <@${targetUserId}> not found in this server. Roles not modified.`;
+          console.warn(`User ${targetUserId} not found in guild ${guild.id} during blacklist role removal.`);
+        }
+      } else {
+        console.warn("Blacklist interaction occurred outside of a guild context. Cannot remove roles.");
+        rolesRemovedMessage = "Could not determine server to remove roles from.";
+      }
+    } catch (roleError) {
+      console.error(`Generic role removal error for ${targetUserId}:`, roleError);
+      rolesRemovedMessage = "An error occurred while trying to remove roles.";
+    }
+
+    // Attempt to DM the user
     try {
       const user = await discordClient.users.fetch(targetUserId);
       const blacklistDmEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
+        .setColor(0xFF0000) // Red
         .setTitle('🚨 You Have Been Blacklisted')
-        .setDescription('You have been blacklisted from our services.')
+        .setDescription('You have been blacklisted from our services due to a violation or administrative action.')
         .addFields(
           { name: 'Roblox Username Affected', value: targetEntry.User || 'N/A', inline: true },
           { name: 'Previous Whitelist Tier', value: targetEntry.Whitelist || 'N/A', inline: true },
           { name: 'Action Taken By', value: interaction.user.tag, inline: false }
-        ).setTimestamp();
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Contact support if you believe this is an error.' });
       await user.send({ embeds: [blacklistDmEmbed] });
-    } catch (dmError) { console.warn(`Failed to send blacklist DM to ${targetUserId}:`, dmError.message); }
+    } catch (dmError) {
+      console.warn(`Failed to send blacklist DM to ${targetUserId}:`, dmError.message);
+      // Non-fatal, user is still blacklisted
+    }
 
-    await interaction.editReply({ content: `Successfully blacklisted user ${robloxUsername} (<@${targetUserId}>).` });
+    await interaction.editReply({ content: `Successfully blacklisted user ${robloxUsername} (<@${targetUserId}>). Whitelist updated. ${rolesRemovedMessage}` });
 
+    // Log the blacklist action to the log channel
     const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID).catch(() => null);
     if (logChannel) {
       const logEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
+        .setColor(0xFF0000) // Red
         .setTitle('🛡️ User Blacklist Action')
         .addFields(
           { name: 'Target User', value: `<@${targetUserId}> (${targetUserId})`, inline: true },
           { name: 'Roblox Username', value: targetEntry.User, inline: true },
           { name: 'Previous Tier', value: targetEntry.Whitelist, inline: true },
-          { name: 'Staff Member', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false }
-        ).setTimestamp();
+          { name: 'Staff Member', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false },
+          { name: 'Role Status', value: rolesRemovedMessage, inline: false}
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Blacklist System Log' });
       await logChannel.send({ embeds: [logEmbed] });
     }
+
   } catch (error) {
     console.error('Blacklist command error:', error);
-    const errReply = { content: 'An unexpected error occurred while blacklisting.', ephemeral: true };
+    const errReply = { content: 'An unexpected error occurred while trying to blacklist the user. Please check logs.', ephemeral: true };
     if (interaction.replied || interaction.deferred) await interaction.editReply(errReply).catch(console.error);
     else await interaction.reply(errReply).catch(console.error);
   }
 }
 
-async function handleScriptDownload(interaction) {
+
+async function handleGetAssetOrScript(interaction) {
   try {
+    // Ephemeral reply in the same channel
     await interaction.deferReply({ ephemeral: true });
 
     const originalMessage = interaction.message;
-    let scriptToDmContent = null;
-    let scriptFileName = `downloaded_script_${generateLogId()}.lua`;
+    let scriptContentToAnalyze = null;
+    let scriptFileAttachment = null; // For attaching the script itself
 
-    const attachment = originalMessage.attachments.first();
-    if (attachment) {
-      // If there's an attachment, it's the definitive script source
+    // 1. Retrieve the full script content
+    const logAttachment = originalMessage.attachments.first(); // Check if the log message itself has the script as attachment
+    if (logAttachment && logAttachment.name.startsWith('script_log_') && logAttachment.name.endsWith('.lua')) {
       try {
-        await interaction.user.send({
-          content: 'Here is the script file you requested from the log:',
-          files: [attachment] // Send the existing attachment object
-        });
-        return interaction.editReply({ content: 'Script file sent to your DMs!' });
-      } catch (dmError) {
-        console.warn('Failed to send script (from attachment) DM:', dmError);
-        return interaction.editReply({ content: 'Failed to send the script to your DMs. Please ensure DMs are open from server members.' });
+        const response = await axios.get(logAttachment.url, { responseType: 'text' });
+        scriptContentToAnalyze = response.data;
+      } catch (fetchError) {
+        console.error("Failed to fetch script from attachment URL:", fetchError);
+        return interaction.editReply({ content: 'Could not retrieve script from attachment for analysis.' });
+      }
+    } else {
+      // If no attachment, try to get from embed (for short scripts)
+      const embed = originalMessage.embeds[0];
+      if (embed && embed.description) {
+        const scriptContentMatch = embed.description.match(/```lua\n([\s\S]*?)\n```/);
+        const extractedScript = scriptContentMatch ? scriptContentMatch[1] : null;
+        if (extractedScript && extractedScript !== SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT) {
+          scriptContentToAnalyze = extractedScript;
+        }
       }
     }
 
-    // No direct attachment, try to extract from embed (for short scripts)
-    const embed = originalMessage.embeds[0];
-    if (embed && embed.description) {
-      const scriptContentMatch = embed.description.match(/```lua\n([\s\S]*?)\n```/);
-      const extractedScript = scriptContentMatch ? scriptContentMatch[1] : null;
-
-      // Check if the extracted content is the placeholder
-      if (extractedScript && extractedScript.trim() !== SCRIPT_IN_ATTACHMENT_PLACEHOLDER.match(/```lua\n([\s\S]*?)\n```/)[1].trim()) {
-        scriptToDmContent = extractedScript;
-      }
+    if (!scriptContentToAnalyze) {
+      return interaction.editReply({ content: 'Could not find script content in the log message to analyze or download.' });
     }
 
-    if (scriptToDmContent) {
-      const buffer = Buffer.from(scriptToDmContent, 'utf-8');
-      const newAttachment = new AttachmentBuilder(buffer, { name: scriptFileName });
-      try {
-        await interaction.user.send({
-          content: 'Here is the script content from the log:',
-          files: [newAttachment]
-        });
-        return interaction.editReply({ content: 'Script content sent to your DMs!' });
-      } catch (dmError) {
-        console.warn('Failed to send script (from embed) DM:', dmError);
-        return interaction.editReply({ content: 'Failed to send script to your DMs. Please ensure DMs are open from server members.' });
-      }
+    // 2. Prepare script attachment for the reply
+    const scriptBuffer = Buffer.from(scriptContentToAnalyze, 'utf-8');
+    scriptFileAttachment = new AttachmentBuilder(scriptBuffer, { name: `retrieved_script_${generateLogId()}.lua` });
+
+    // 3. Parse for asset IDs
+    const assetIds = new Set(); // Use a Set to store unique IDs
+    const requireRegex = /require\s*\(\s*(\d+)\s*\)/g;
+    const getObjectsRegex = /(?:GetObjects|InsertService:LoadAsset)\s*\(\s*["']rbxassetid:\/\/(\d+)["']\s*\)/g; // Simpler GetObjects
+    const contentRegex = /Content\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi;
+
+
+    let match;
+    while ((match = requireRegex.exec(scriptContentToAnalyze)) !== null) {
+      assetIds.add(match[1]);
+    }
+    while ((match = getObjectsRegex.exec(scriptContentToAnalyze)) !== null) {
+      assetIds.add(match[1]);
+    }
+    while ((match = contentRegex.exec(scriptContentToAnalyze)) !== null) {
+      assetIds.add(match[1]);
     }
 
-    return interaction.editReply({ content: 'No downloadable script content found in this log entry (it might have been too long and the original attachment is missing, or the log is malformed).' });
+
+    // 4. Construct the ephemeral reply message
+    let replyContent = "Script content is attached.";
+    const attachmentsForReply = [scriptFileAttachment];
+
+    if (assetIds.size > 0) {
+      const uniqueAssetIds = Array.from(assetIds);
+      const assetLinks = uniqueAssetIds.map(id => `[${id}](https://www.roblox.com/library/${id})`).join(', ');
+      replyContent = `Found Asset ID(s) in script: ${assetLinks}\n\nThe full script is also attached.`;
+    }
+
+    await interaction.editReply({
+      content: replyContent,
+      files: attachmentsForReply, // Send the script as an attachment
+      ephemeral: true
+    });
 
   } catch (error) {
-    console.error('Download script command error:', error);
-    const errReply = { content: 'An unexpected error occurred while processing your download request.', ephemeral: true };
+    console.error('Get Asset/Script command error:', error);
+    const errReply = { content: 'An unexpected error occurred while processing your request.', ephemeral: true };
     if (interaction.replied || interaction.deferred) await interaction.editReply(errReply).catch(console.error);
     else await interaction.reply(errReply).catch(console.error);
   }
 }
+
 
 // --- Express Routes ---
 app.get('/', (req, res) => {
@@ -325,9 +390,11 @@ app.get('/download/:assetId', async (req, res) => {
   try {
     const assetId = req.params.assetId;
     if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
+    // This still returns the dummy text file.
+    // For actual asset download, you'd need a much more complex system.
     const fileName = `${assetId}.rbxm`;
-    const content = `-- Roblox model reference (AssetId: ${assetId})`;
-    res.set({ 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${fileName}"` }).send(content);
+    const content = `-- Roblox model reference (AssetId: ${assetId})\n-- This is a placeholder. To get the actual asset, use the ID on the Roblox website or in Studio.`;
+    res.set({ 'Content-Type': 'text/plain', 'Content-Disposition': `attachment; filename="${fileName}"` }).send(content);
   } catch (error) {
     console.error(`Download error for asset ${req.params.assetId}:`, error);
     res.status(500).json({ status: 'error', message: 'Failed to generate download.' });
@@ -343,11 +410,9 @@ app.post('/send/scriptlogs', async (req, res) => {
   try {
     const embedDataFromPayload = req.body.embeds[0];
     const description = embedDataFromPayload.description || '';
-    // Extract the full script content from the incoming payload's description
     const scriptContentMatch = description.match(/```lua\n([\s\S]*?)\n```/);
     const fullScriptContent = scriptContentMatch ? scriptContentMatch[1] : null;
 
-    // Pass the original embedData and the extracted fullScriptContent
     await sendToDiscordChannel(embedDataFromPayload, fullScriptContent);
 
     res.status(200).json({ status: 'success', message: 'Log received.', logId: generateLogId() });
@@ -362,7 +427,7 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   try {
     const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
       timeout: 8000,
-      headers: { 'User-Agent': 'LuaWhitelistServer/1.2' }
+      headers: { 'User-Agent': 'LuaWhitelistServer/1.3' } // Increment User-Agent version
     });
     res.set({
       'Content-Type': 'text/plain; charset=utf-8',
@@ -380,25 +445,35 @@ app.get('/scripts/LuaMenu', async (req, res) => {
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
   try {
-    if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
-    else if (interaction.customId === 'download_script_from_log') await handleScriptDownload(interaction);
+    if (interaction.customId === 'blacklist_user_from_log') {
+      await handleBlacklist(interaction);
+    } else if (interaction.customId === 'get_asset_script_from_log') { // Updated ID
+      await handleGetAssetOrScript(interaction);
+    }
   } catch (error) {
     console.error('Unhandled error in interactionCreate:', error);
-    const replyOptions = { content: 'An error occurred.', ephemeral: true };
-    if (interaction.replied || interaction.deferred) await interaction.editReply(replyOptions).catch(console.error);
-    else await interaction.reply(replyOptions).catch(console.error);
+    const replyOptions = { content: 'An error occurred while processing your request.', ephemeral: true };
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply(replyOptions).catch(e => console.error("Error editing reply in interaction error handler:", e));
+    } else {
+      await interaction.reply(replyOptions).catch(e => console.error("Error replying in interaction error handler:", e));
+    }
   }
 });
 
 discordClient.on('ready', () => {
   console.log(`Discord Bot logged in as ${discordClient.user.tag}`);
   discordClient.user.setStatus('dnd');
-  discordClient.user.setActivity('Managing Whitelists', { type: 3 }); // 3 = Watching
+  discordClient.user.setActivity('Managing Whitelists', { type: ActivityType.Watching }); // Correct use of ActivityType
   console.log(`Bot is in ${discordClient.guilds.cache.size} guilds.`);
+  console.log(`Watching GitHub Repo: ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}, Branch: ${config.GITHUB_BRANCH}, Whitelist: ${config.WHITELIST_PATH}`);
 });
 
-process.on('unhandledRejection', (reason, promise) => console.error('Unhandled Rejection:', reason, promise));
-process.on('uncaughtException', (error) => console.error('Uncaught Exception:', error));
+process.on('unhandledRejection', (reason, promise) => console.error('Unhandled Rejection at:', promise, 'reason:', reason));
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // process.exit(1); // Consider exiting on uncaught exceptions for stability in some cases
+});
 
 async function startServer() {
   try {
