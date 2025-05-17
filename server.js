@@ -32,7 +32,7 @@ if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !con
 }
 
 const app = express();
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 10000 } });
+const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } }); // Increased timeout slightly
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
@@ -40,34 +40,41 @@ const discordClient = new Client({
   ]
 });
 
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
 
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
 
 async function getWhitelistFromGitHub() {
+  console.log("Fetching whitelist from GitHub...");
   try {
     const { data } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
       path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
-      headers: { 'Accept': 'application/vnd.github.v3.raw' }
+      headers: { 'Accept': 'application/vnd.github.v3.raw', 'Cache-Control': 'no-cache' } // Added no-cache
     });
+    console.log("Whitelist fetched successfully.");
     if (typeof data === 'string') return JSON.parse(data);
     if (data && data.content) return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
     if (typeof data === 'object' && data !== null) return data;
     throw new Error('Unexpected GitHub response for getWhitelistFromGitHub.');
   } catch (error) {
-    console.error(`GitHub API Error (getWhitelist):`, error.status, error.message);
+    console.error(`GitHub API Error (getWhitelist): Status ${error.status}, Message: ${error.message}`);
     if (error.status === 404) throw new Error(`Whitelist file not found: ${config.WHITELIST_PATH}`);
-    throw new Error('Failed to fetch whitelist from GitHub.');
+    // Rethrow a more generic error or a custom one if needed
+    const newError = new Error(`Failed to fetch whitelist from GitHub. Original: ${error.message}`);
+    newError.cause = error; // Preserve original error
+    throw newError;
   }
 }
 
 async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') {
+  console.log("Updating whitelist on GitHub...");
   try {
     const { data: fileData } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
-      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH
+      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
+      headers: { 'Cache-Control': 'no-cache' } // Added no-cache
     });
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
@@ -76,10 +83,13 @@ async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whi
       content: Buffer.from(JSON.stringify(newWhitelist, null, 2)).toString('base64'),
       sha: fileData.sha, branch: config.GITHUB_BRANCH
     });
+    console.log("Whitelist updated successfully on GitHub.");
     return true;
   } catch (error) {
-    console.error('GitHub API Error (updateWhitelist):', error.status, error.message);
-    throw new Error('Failed to update whitelist on GitHub.');
+    console.error(`GitHub API Error (updateWhitelist): Status ${error.status}, Message: ${error.message}`);
+    const newError = new Error(`Failed to update whitelist on GitHub. Original: ${error.message}`);
+    newError.cause = error;
+    throw newError;
   }
 }
 
@@ -111,31 +121,36 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
 }
 
 async function handleBlacklist(interaction) {
+  let hasRepliedOrDeferred = false;
   try {
+    console.log("handleBlacklist: Deferring reply...");
     await interaction.deferReply({ ephemeral: true });
+    hasRepliedOrDeferred = true;
+    console.log("handleBlacklist: Reply deferred.");
 
     const originalMessage = interaction.message;
     const embed = originalMessage.embeds[0];
 
-    if (!embed || !embed.description) {
-      return interaction.editReply({ content: 'Error: Could not find user information in the original message embed.' });
+    if (!embed || typeof embed.description !== 'string' || embed.description.trim() === '') {
+      console.error("Blacklist Error: Embed description is missing, not a string, or empty.");
+      console.log("Received embed object:", JSON.stringify(embed, null, 2));
+      return interaction.editReply({ content: 'Error: Critical information missing from log embed (description).' });
     }
 
-    const descriptionToSearch = embed.description;
-    console.log("Attempting blacklist. Embed Description for regex debugging (raw):");
-    console.log(JSON.stringify(descriptionToSearch)); // Shows all characters like \n
+    const descriptionToSearch = embed.description.trim();
+    console.log("Attempting blacklist. Trimmed Embed Description for regex debugging (raw):");
+    console.log(JSON.stringify(descriptionToSearch));
 
-    // ENHANCED REGEX with case-insensitivity and flexible spacing
-    const discordIdRegex = /discord:\s*<@!?(\d+)>/i;
+    // UPDATED REGEX
+    const discordIdRegex = /(?:\*\*|)discord(?:\*\*|):\s*<@!?(\d+)>/i;
     const discordIdMatch = descriptionToSearch.match(discordIdRegex);
 
-    // Username regex remains the same as it seems to work
     const robloxUsernameRegex = /\*\*Username:\*\* \*\*([^*]+)\*\*/;
     const robloxUsernameMatch = descriptionToSearch.match(robloxUsernameRegex);
 
     if (!discordIdMatch || !discordIdMatch[1]) {
-      console.error(`Failed to match Discord ID. Regex used: ${discordIdRegex.toString()}`);
-      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed. Please check the log format.' });
+      console.error(`Failed to match Discord ID. Regex used: ${discordIdRegex.toString()}. Review the JSON.stringified description above.`);
+      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed. Please check the log format and server logs.' });
     }
     const targetUserId = discordIdMatch[1];
     const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown Roblox User';
@@ -169,6 +184,8 @@ async function handleBlacklist(interaction) {
         if (removedRoleNames.length > 0) rolesRemovedMessage = `Removed roles: ${removedRoleNames.join(', ')}.`;
         else rolesRemovedMessage = "User had no relevant roles to remove.";
       }
+    } else {
+        console.warn("Interaction for blacklist is not in a guild context. Cannot manage roles.")
     }
 
     try {
@@ -182,6 +199,7 @@ async function handleBlacklist(interaction) {
         ).setTimestamp()]});
     } catch (e) { console.warn(`Failed to DM ${targetUserId} about blacklist:`, e.message); }
 
+    // This is the line 200 that caused the error in your log
     await interaction.editReply({ content: `Blacklisted ${robloxUsername} (<@${targetUserId}>). ${rolesRemovedMessage}` });
 
     const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID).catch(() => null);
@@ -197,20 +215,39 @@ async function handleBlacklist(interaction) {
     }
   } catch (error) {
     console.error('Blacklist command error:', error);
-    await interaction.editReply({ content: 'An unexpected error occurred during blacklisting.' }).catch(console.error);
+    if (hasRepliedOrDeferred && !interaction.replied) {
+      // If we deferred but haven't sent any actual reply yet (e.g., an error happened before an editReply)
+      await interaction.editReply({ content: 'An unexpected error occurred during blacklisting. Please check server logs.', ephemeral: true }).catch(err => console.error("Error sending final error reply:", err));
+    } else if (!hasRepliedOrDeferred) {
+      // This should ideally not happen if deferReply is the first step.
+      console.error("Interaction was not replied to or deferred before erroring in handleBlacklist.");
+      // Attempt a fresh reply if possible, though it might be too late.
+      if (!interaction.replied) {
+        await interaction.reply({ content: 'An error occurred, and the interaction was not properly deferred.', ephemeral: true }).catch(err => console.error("Error sending emergency reply:", err));
+      }
+    }
+    // If an interaction.editReply was already sent (e.g. "Could not extract ID"), we don't want to editReply again.
   }
 }
 
 async function handleGetAssetOrScript(interaction) {
+  let hasRepliedOrDeferredAsset = false;
   try {
     await interaction.deferReply({ ephemeral: true });
+    hasRepliedOrDeferredAsset = true;
     const originalMessage = interaction.message;
     let scriptContentToAnalyze = null;
 
     const logAttachment = originalMessage.attachments.first();
     if (logAttachment?.name.endsWith('.lua')) {
-      scriptContentToAnalyze = (await axios.get(logAttachment.url, { responseType: 'text' })).data;
-    } else {
+      try {
+          scriptContentToAnalyze = (await axios.get(logAttachment.url, { responseType: 'text' })).data;
+      } catch (fetchError) {
+         console.warn("Failed to fetch script from attachment URL:", fetchError.message);
+      }
+    }
+    
+    if (!scriptContentToAnalyze) {
       const embed = originalMessage.embeds[0];
       if (embed?.description) {
         const match = embed.description.match(/```lua\n([\s\S]*?)\n```/);
@@ -229,17 +266,15 @@ async function handleGetAssetOrScript(interaction) {
     const regexes = [
       /require\s*\(\s*(\d+)\s*\)/g,
       /(?:GetObjects|InsertService:LoadAsset(?:Version)?)\s*\(\s*(?:["']rbxassetid:\/\/(\d+)["']|(\d+))\s*\)/gi,
-      /Content\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /Image\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /Texture(?:Id)?\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /SoundId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
+      /Content\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi, /Image\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
+      /Texture(?:Id)?\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi, /SoundId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
       /MeshId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
     ];
 
     for (const regex of regexes) {
       let match;
       while ((match = regex.exec(scriptContentToAnalyze)) !== null) {
-        assetIds.add(match[1] || match[2]); // Handles multiple capture groups
+        assetIds.add(match[1] || match[2]);
       }
     }
     
@@ -253,11 +288,15 @@ async function handleGetAssetOrScript(interaction) {
     await interaction.editReply({ content: replyContent, files: [scriptFile], ephemeral: true });
   } catch (error) {
     console.error('Get Asset/Script error:', error);
-    await interaction.editReply({ content: 'Error processing request.' }).catch(console.error);
+    if (hasRepliedOrDeferredAsset && !interaction.replied) {
+        await interaction.editReply({ content: 'Error processing asset/script request.' }).catch(console.error);
+    } else if (!hasRepliedOrDeferredAsset && !interaction.replied) {
+        await interaction.reply({ content: 'Error processing asset/script request.', ephemeral: true }).catch(console.error);
+    }
   }
 }
 
-// --- Express Routes (Simplified for brevity, no changes here from previous correct version) ---
+// --- Express Routes ---
 app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
 
 app.get('/verify/:username', async (req, res) => {
@@ -275,7 +314,7 @@ app.get('/verify/:username', async (req, res) => {
   }
 });
 
-app.get('/download/:assetId', async (req, res) => { // Placeholder
+app.get('/download/:assetId', async (req, res) => {
   const assetId = req.params.assetId;
   if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
   res.set({ 'Content-Type': 'text/plain', 'Content-Disposition': `attachment; filename="${assetId}.rbxm"` })
@@ -300,7 +339,7 @@ app.post('/send/scriptlogs', async (req, res) => {
 app.get('/scripts/LuaMenu', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   try {
-    const response = await axios.get(config.GITHUB_LUA_MENU_URL, { timeout: 8000, headers: { 'User-Agent': 'LuaWhitelistServer/1.5' }});
+    const response = await axios.get(config.GITHUB_LUA_MENU_URL, { timeout: 8000, headers: { 'User-Agent': 'LuaWhitelistServer/1.7' }});
     res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).send(response.data);
   } catch (error) {
     console.error('Error /scripts/LuaMenu:', error.message);
@@ -314,9 +353,14 @@ discordClient.on('interactionCreate', async interaction => {
     if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
     else if (interaction.customId === 'get_asset_script_from_log') await handleGetAssetOrScript(interaction);
   } catch (error) {
-    console.error('Interaction error:', error);
-    if (interaction.replied || interaction.deferred) await interaction.editReply({ content: 'Error processing.', ephemeral: true}).catch(console.error);
-    else await interaction.reply({ content: 'Error processing.', ephemeral: true }).catch(console.error);
+    console.error('Main Interaction error catcher:', error);
+    // This catch block might be redundant if individual handlers manage their replies properly.
+    // However, it's a fallback.
+    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: 'An unhandled error occurred while processing your request.', ephemeral: true }).catch(e => console.error("Error sending fallback reply:", e));
+    } else if (interaction.isRepliable() && interaction.deferred && !interaction.replied) {
+        await interaction.editReply({ content: 'An unhandled error occurred after deferring your request.', ephemeral: true }).catch(e => console.error("Error sending fallback editReply:", e));
+    }
   }
 });
 
