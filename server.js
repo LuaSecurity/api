@@ -133,29 +133,64 @@ async function handleBlacklist(interaction) {
 
     if (!embed || typeof embed.description !== 'string' || embed.description.trim() === '') {
       console.error("Blacklist Error: Embed description is missing, not a string, or empty.");
-      console.log("Received embed object:", JSON.stringify(embed, null, 2));
+      const embedContentForDebug = embed ? JSON.stringify(embed, null, 2) : "Embed object is null/undefined";
+      console.log("Received embed object:", embedContentForDebug);
       return interaction.editReply({ content: 'Error: Critical information missing from log embed (description).' });
     }
 
-    const descriptionToSearch = embed.description.trim();
-    console.log("Attempting blacklist. Trimmed Embed Description for regex debugging (raw):");
-    console.log(JSON.stringify(descriptionToSearch));
+    const rawDescription = embed.description; // Get it once
+    const descriptionToSearch = rawDescription.trim();
 
-    // UPDATED REGEX
-    const discordIdRegex = /(?:\*\*|)discord(?:\*\*|):\s*<@!?(\d+)>/i;
-    const discordIdMatch = descriptionToSearch.match(discordIdRegex);
+    // --- EXTREME DEBUGGING FOR REGEX ---
+    console.log("--- REGEX DEBUG START ---");
+    console.log("Type of descriptionToSearch:", typeof descriptionToSearch);
+    console.log("Length of descriptionToSearch:", descriptionToSearch.length);
+    console.log("Trimmed Embed Description (raw, for JSON):");
+    console.log(JSON.stringify(descriptionToSearch)); // Shows all characters like \n
 
-    const robloxUsernameRegex = /\*\*Username:\*\* \*\*([^*]+)\*\*/;
-    const robloxUsernameMatch = descriptionToSearch.match(robloxUsernameRegex);
-
-    if (!discordIdMatch || !discordIdMatch[1]) {
-      console.error(`Failed to match Discord ID. Regex used: ${discordIdRegex.toString()}. Review the JSON.stringified description above.`);
-      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed. Please check the log format and server logs.' });
+    // Try to find the "Discord:" line specifically
+    const lines = descriptionToSearch.split('\n');
+    let discordLine = null;
+    for (const line of lines) {
+        if (line.toLowerCase().includes("discord:")) {
+            discordLine = line;
+            break;
+        }
     }
-    const targetUserId = discordIdMatch[1];
+
+    console.log("Identified potential Discord line:", discordLine);
+    let targetUserId = null;
+
+    if (discordLine) {
+        console.log("Attempting match on isolated line:", discordLine);
+        const idPatternOnLine = /<@!?(\d+)>/;
+        const lineMatch = discordLine.match(idPatternOnLine);
+        if (lineMatch && lineMatch[1]) {
+            targetUserId = lineMatch[1];
+            console.log("SUCCESSFULLY extracted ID from isolated line:", targetUserId);
+        } else {
+            console.log("FAILED to extract ID from isolated line. Line was:", JSON.stringify(discordLine), "Pattern:", idPatternOnLine.toString());
+        }
+    } else {
+        console.log("Could not isolate a line containing 'discord:'.");
+    }
+    // --- END REGEX DEBUG ---
+
+
+    const robloxUsernameRegex = /\*\*Username:\*\* \*\*([^*]+)\*\*/; // This seems to work
+    const robloxUsernameMatch = descriptionToSearch.match(robloxUsernameRegex);
     const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown Roblox User';
+
+
+    if (!targetUserId) { // Check if our new extraction method failed
+      console.error(`Failed to match Discord ID using new isolated line method. Last discordLine found: ${discordLine ? JSON.stringify(discordLine) : 'null'}`);
+      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed (debug attempt failed). Please check server logs.' });
+    }
     console.log(`Extracted for blacklist: Discord ID=${targetUserId}, Roblox User=${robloxUsername}`);
 
+
+    // ... (rest of the blacklist logic: getWhitelistFromGitHub, updateWhitelistOnGitHub, roles, DM, final editReply) ...
+    // THIS PART REMAINS THE SAME AS THE PREVIOUS VERSION
     let whitelist = await getWhitelistFromGitHub();
     const targetEntryIndex = whitelist.findIndex(entry => entry.Discord === targetUserId);
 
@@ -199,7 +234,6 @@ async function handleBlacklist(interaction) {
         ).setTimestamp()]});
     } catch (e) { console.warn(`Failed to DM ${targetUserId} about blacklist:`, e.message); }
 
-    // This is the line 200 that caused the error in your log
     await interaction.editReply({ content: `Blacklisted ${robloxUsername} (<@${targetUserId}>). ${rolesRemovedMessage}` });
 
     const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID).catch(() => null);
@@ -213,20 +247,17 @@ async function handleBlacklist(interaction) {
           { name: 'Role Status', value: rolesRemovedMessage, inline: false }
         ).setTimestamp()]});
     }
+
   } catch (error) {
     console.error('Blacklist command error:', error);
     if (hasRepliedOrDeferred && !interaction.replied) {
-      // If we deferred but haven't sent any actual reply yet (e.g., an error happened before an editReply)
       await interaction.editReply({ content: 'An unexpected error occurred during blacklisting. Please check server logs.', ephemeral: true }).catch(err => console.error("Error sending final error reply:", err));
     } else if (!hasRepliedOrDeferred) {
-      // This should ideally not happen if deferReply is the first step.
       console.error("Interaction was not replied to or deferred before erroring in handleBlacklist.");
-      // Attempt a fresh reply if possible, though it might be too late.
       if (!interaction.replied) {
         await interaction.reply({ content: 'An error occurred, and the interaction was not properly deferred.', ephemeral: true }).catch(err => console.error("Error sending emergency reply:", err));
       }
     }
-    // If an interaction.editReply was already sent (e.g. "Could not extract ID"), we don't want to editReply again.
   }
 }
 
