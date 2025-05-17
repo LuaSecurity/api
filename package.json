@@ -1,6 +1,6 @@
 {
   "name": "luaserverside-backend",
-  "version": "2.0.0",  // Incremented version as we're adding significant features
+  "version": "2.0.0",
   "description": "API for Lua ServerSide, whitelist, Discord OAuth, web dashboard, and script execution queue",
   "main": "server.js",
   "scripts": {
@@ -10,17 +10,17 @@
   "dependencies": {
     "axios": "^1.6.7",
     "body-parser": "^1.20.2",
-    "cookie-parser": "^1.4.6", // Still useful, though express-session handles session cookies
-    "cors": "^2.8.5",         // Good to have if your frontend is on a different domain/port
-    "crypto": "latest",       // Node.js built-in, technically doesn't need to be listed but fine
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "crypto": "latest",
     "discord.js": "^14.14.1",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "express-session": "^1.18.0",  // <<<< ADDED
+    "express-session": "^1.18.0",
     "@octokit/rest": "^20.0.2",
-    "passport": "^0.7.0",          // <<<< ADDED
-    "passport-discord": "^0.1.4",  // <<<< ADDED
-    "buffer": "^6.0.3"             // Node.js built-in, often not needed in package.json
+    "passport": "^0.7.0",
+    "passport-discord": "^0.1.4",
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
