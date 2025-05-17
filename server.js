@@ -114,116 +114,204 @@ app.get('/executor', async (req, res) => {
   const scripts = await getScriptsFromGitHub();
   const scriptOptions = scripts.map(s => `<option value="${s.Script.replace(/Username/g, username)}">${s.Name}</option>`).join('');
 
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Lua Control Panel</title>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-      <style>
-        body, html { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background: #101010; color: white; height: 100%; }
-        .container { display: flex; height: 100vh; }
-        .sidebar {
-          background: linear-gradient(180deg, #2d0a52, #1a1a1a);
-          width: 240px;
-          padding: 30px 20px;
-          box-sizing: border-box;
-          display: flex;
-          flex-direction: column;
-        }
-        .sidebar h1 { font-size: 24px; margin-bottom: 30px; color: white; }
-        .nav-link { margin-bottom: 20px; text-decoration: none; color: #bbb; font-weight: 600; font-size: 16px; }
-        .nav-link:hover, .nav-link.active { color: #fff; }
-        .content { flex: 1; padding: 30px; display: flex; flex-direction: column; }
-        .tabs { display: none; height: 100%; }
-        .tabs.active { display: flex; flex-direction: column; height: 100%; }
-        select, button {
-          font-size: 16px; padding: 12px; border-radius: 6px; border: none;
-          margin: 10px 0; background: #222; color: white;
-        }
-        #editor { flex: 1; min-height: 400px; border: 1px solid #333; border-radius: 8px; overflow: hidden; }
-        button { background: linear-gradient(90deg, #8e2de2, #4a00e0); cursor: pointer; font-weight: bold; }
-        #response { margin-top: 15px; color: lime; font-size: 14px; white-space: pre-wrap; }
-      </style>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
-    </head>
-    <body>
-      <div class="container">
-        <div class="sidebar">
-          <h1>Lua Panel</h1>
-          <a class="nav-link active" href="#" onclick="showTab('dashboard')">Dashboard</a>
-          <a class="nav-link" href="#" onclick="showTab('executor')">Executor</a>
-          <a class="nav-link" href="#" onclick="showTab('scripthub')">Script Hub</a>
-          <a class="nav-link" href="#" onclick="showTab('pricing')">Pricing</a>
-        </div>
-        <div class="content">
-          <div id="dashboard" class="tabs active">
-            <h2>Welcome, ${username}</h2>
-            <p>This is your dashboard. Use the sidebar to access the executor or scripts.</p>
-          </div>
+res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lua Control Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; padding: 0; margin: 0; }
+    body, html { font-family: 'Inter', sans-serif; background: #0e0e0e; color: white; height: 100%; }
+    .container { display: flex; height: 100vh; }
 
-          <div id="executor" class="tabs">
-            <div id="editor"></div>
-            <button onclick="executeScript()">Execute</button>
-            <div id="response"></div>
-          </div>
+    .sidebar {
+      width: 240px;
+      background: linear-gradient(180deg, #1a1a1a, #101010);
+      padding: 30px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      border-right: 1px solid #333;
+    }
 
-          <div id="scripthub" class="tabs">
-            <h2>Script Hub</h2>
-            <select id="hub" onchange="loadScript(this.value)">
-              <option value="">-- Choose a script --</option>
-              ${scriptOptions}
-            </select>
-          </div>
+    .sidebar h1 {
+      font-size: 24px;
+      color: white;
+      margin-bottom: 20px;
+      font-weight: 700;
+    }
 
-          <div id="pricing" class="tabs">
-            <h2>Pricing Tiers</h2>
-            <p><strong>Standard:</strong> Basic access to community features.</p>
-            <p><strong>Premium:</strong> Unlock premium hubs and exclusive scripts.</p>
-            <p><strong>Ultimate:</strong> Full access, all scripts, priority support.</p>
-          </div>
+    .nav-link {
+      color: #888;
+      font-size: 15px;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      font-weight: 600;
+    }
+
+    .nav-link:hover, .nav-link.active {
+      color: #fff;
+      background: linear-gradient(90deg, #8e2de2, #4a00e0);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+
+    .content {
+      flex: 1;
+      padding: 40px;
+      overflow-y: auto;
+    }
+
+    .tabs { display: none; }
+    .tabs.active { display: block; }
+
+    h2 { margin-bottom: 20px; font-size: 28px; }
+
+    .script-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .script-card {
+      background: #1b1b1b;
+      border: 1px solid #2d2d2d;
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .script-card:hover {
+      background: #272727;
+      transform: scale(1.03);
+      border-color: #8e2de2;
+    }
+
+    .script-card h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+      color: #ddd;
+    }
+
+    .button {
+      padding: 12px 20px;
+      background: linear-gradient(90deg, #8e2de2, #4a00e0);
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: background 0.3s ease;
+    }
+
+    .button:hover {
+      background: linear-gradient(90deg, #4a00e0, #8e2de2);
+    }
+
+    #editor {
+      height: 400px;
+      border: 1px solid #333;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 20px;
+    }
+
+    #response {
+      color: #00ff88;
+      margin-top: 15px;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="sidebar">
+      <h1>Lua Panel</h1>
+      <a class="nav-link active" href="#" onclick="showTab('dashboard', this)">Dashboard</a>
+      <a class="nav-link" href="#" onclick="showTab('executor', this)">Executor</a>
+      <a class="nav-link" href="#" onclick="showTab('scripthub', this)">Script Hub</a>
+      <a class="nav-link" href="#" onclick="showTab('pricing', this)">Pricing</a>
+    </div>
+    <div class="content">
+      <div id="dashboard" class="tabs active">
+        <h2>Welcome, ${username}</h2>
+        <p>Explore scripts, execute Lua code, and manage your experience.</p>
+      </div>
+
+      <div id="executor" class="tabs">
+        <h2>Script Executor</h2>
+        <div id="editor">// Write or load a Lua script here</div>
+        <button class="button" onclick="executeScript()">Execute</button>
+        <div id="response"></div>
+      </div>
+
+      <div id="scripthub" class="tabs">
+        <h2>Script Hub</h2>
+        <div class="script-grid">
+          ${scripts.map(script => `
+            <div class="script-card" onclick="loadScript(\`${script.Script.replace(/Username/g, username)}\`)">
+              <h3>${script.Name}</h3>
+              <p>Click to load into executor</p>
+            </div>
+          `).join('')}
         </div>
       </div>
-      <script>
-        let editor;
-        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' }});
-        require(["vs/editor/editor.main"], function () {
-          editor = monaco.editor.create(document.getElementById("editor"), {
-            value: "-- Select or write your Lua script here",
-            language: "lua",
-            theme: "vs-dark",
-            fontSize: 16,
-            automaticLayout: true
-          });
-        });
 
-        function loadScript(code) {
-          if (editor) editor.setValue(code);
-        }
+      <div id="pricing" class="tabs">
+        <h2>Pricing Tiers</h2>
+        <p><strong>Standard:</strong> Basic access to community features.</p>
+        <p><strong>Premium:</strong> Unlock premium hubs and exclusive scripts.</p>
+        <p><strong>Ultimate:</strong> Full access, all scripts, priority support.</p>
+      </div>
+    </div>
+  </div>
 
-        function executeScript() {
-          const script = editor.getValue();
-          fetch('/queue', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ script })
-          })
-          .then(r => r.json())
-          .then(d => document.getElementById('response').innerText = d.message);
-        }
+  <script>
+    let editor;
+    require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' }});
+    require(["vs/editor/editor.main"], function () {
+      editor = monaco.editor.create(document.getElementById("editor"), {
+        value: "-- Lua executor ready",
+        language: "lua",
+        theme: "vs-dark",
+        fontSize: 16,
+        automaticLayout: true
+      });
+    });
 
-        function showTab(tabId) {
-          document.querySelectorAll('.tabs').forEach(tab => tab.classList.remove('active'));
-          document.getElementById(tabId).classList.add('active');
-          document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-          event.target.classList.add('active');
-        }
-      </script>
-    </body>
-    </html>
-  `);
+    function loadScript(code) {
+      if (editor) editor.setValue(code);
+    }
+
+    function executeScript() {
+      const script = editor.getValue();
+      fetch('/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script })
+      })
+      .then(r => r.json())
+      .then(d => document.getElementById('response').innerText = d.message);
+    }
+
+    function showTab(id, el) {
+      document.querySelectorAll('.tabs').forEach(tab => tab.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+      el.classList.add('active');
+    }
+  </script>
+</body>
+</html>
+`);
 });
 
 app.post('/queue', async (req, res) => {
