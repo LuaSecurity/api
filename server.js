@@ -45,10 +45,7 @@ app.use(bodyParser.json({ limit: '50mb' }));
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
 
-async function sendActionLogToDiscord(title, description, interaction, color = 0x0099FF, additionalFields = []) { /* ... (same as previous) ... */ }
-async function getWhitelistFromGitHub() { /* ... (same as previous) ... */ }
-async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') { /* ... (same as previous) ... */ }
-// Helper function to send logs to the Discord log channel (definition from previous correct version)
+// Helper function to send logs to the Discord log channel
 async function sendActionLogToDiscord(title, description, interaction, color = 0x0099FF, additionalFields = []) {
     try {
         const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
@@ -57,13 +54,14 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
             return;
         }
         const logEmbed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description.substring(0, 4000)).setTimestamp();
-        if (interaction) {
+        if (interaction) { // interaction can be null if called from non-interaction context
             logEmbed.addFields({ name: 'Action Initiated By', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true });
             if (interaction.guild) {
                  logEmbed.addFields({ name: 'Context', value: `Guild: ${interaction.guild.name}\nChannel: ${interaction.channel.name}`, inline: true });
             }
         }
         for (const field of additionalFields) {
+            // Discord embed field limit is 25. Let's aim for less to be safe.
             if (logEmbed.data.fields && logEmbed.data.fields.length >= 23 && additionalFields.length > 0) {
                 logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."}); break;
             }
@@ -71,6 +69,99 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
         }
         await logChannel.send({ embeds: [logEmbed] });
     } catch (logSendError) { console.error("CRITICAL: Failed to send action log to Discord:", logSendError); }
+}
+
+
+async function getWhitelistFromGitHub() {
+  console.log(`Fetching whitelist: ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}`);
+  let rawDataContent; // For debugging if parsing fails
+  try {
+    const response = await octokit.rest.repos.getContent({
+      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
+      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
+      headers: { 'Accept': 'application/vnd.github.v3.raw', 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+    });
+    
+    rawDataContent = response.data; 
+
+    if (response.status !== 200) {
+        console.warn(`GitHub API returned status ${response.status} for getWhitelistFromGitHub.`);
+        throw new Error(`GitHub API request failed with status ${response.status}`);
+    }
+
+    console.log("Whitelist content fetched successfully from GitHub. Type of data:", typeof rawDataContent);
+
+    let parsedWhitelist;
+    if (typeof rawDataContent === 'string') {
+      if (rawDataContent.trim() === "") { // Handle empty file case
+          console.warn("getWhitelistFromGitHub: Whitelist file is empty. Returning empty array.");
+          return [];
+      }
+      parsedWhitelist = JSON.parse(rawDataContent);
+    } else if (rawDataContent && typeof rawDataContent.content === 'string') { // Should not happen with 'raw' accept header
+      console.warn("getWhitelistFromGitHub: Received object with 'content' field, expected raw string. Attempting base64 decode.");
+      const decodedContent = Buffer.from(rawDataContent.content, 'base64').toString('utf-8');
+      if (decodedContent.trim() === "") {
+          console.warn("getWhitelistFromGitHub: Decoded whitelist file content is empty. Returning empty array.");
+          return [];
+      }
+      parsedWhitelist = JSON.parse(decodedContent);
+    } else if (typeof rawDataContent === 'object' && rawDataContent !== null && Array.isArray(rawDataContent)) {
+      // If Octokit somehow already parsed it into an array (less likely with 'raw' header)
+      parsedWhitelist = rawDataContent;
+    } else {
+      console.warn("getWhitelistFromGitHub: Received data was not a string, an object with 'content', or an array. Data (partial):", JSON.stringify(rawDataContent).substring(0, 500));
+      throw new Error('Unexpected GitHub response format for whitelist content.');
+    }
+
+    if (!Array.isArray(parsedWhitelist)) {
+        console.warn("getWhitelistFromGitHub: Parsed whitelist is not an array. Type:", typeof parsedWhitelist, "Content (partial):", JSON.stringify(parsedWhitelist).substring(0,500));
+        throw new Error('Parsed whitelist data from GitHub is not an array.');
+    }
+    
+    console.log(`Whitelist parsed. Found ${parsedWhitelist.length} entries.`);
+    return parsedWhitelist;
+
+  } catch (error) {
+    console.error(`Error in getWhitelistFromGitHub: ${error.message}`);
+    const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,500) : (rawDataContent ? JSON.stringify(rawDataContent).substring(0, 500) : "N/A");
+    console.error(`Raw data preview on error (if any): ${rawDataPreview}`);
+    
+    await sendActionLogToDiscord(
+        'GitHub Whitelist Fetch/Parse Error',
+        `Failed to get/parse whitelist from ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}:\n**Error:** ${error.message}\n**Raw Data Preview:** \`\`\`${rawDataPreview}\`\`\``,
+        null, 0xFF0000
+    );
+    const newError = new Error(`Failed to fetch or parse whitelist from GitHub. Path: ${config.WHITELIST_PATH}. Original: ${error.message}`);
+    newError.cause = error; 
+    throw newError;
+  }
+}
+
+async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') {
+  console.log("Updating whitelist on GitHub...");
+  try {
+    const { data: fileData } = await octokit.rest.repos.getContent({
+      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
+      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+    });
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
+      path: config.WHITELIST_PATH,
+      message: `${actionMessage} - ${new Date().toISOString()}`,
+      content: Buffer.from(JSON.stringify(newWhitelist, null, 2)).toString('base64'),
+      sha: fileData.sha, branch: config.GITHUB_BRANCH
+    });
+    console.log("Whitelist updated successfully on GitHub.");
+    return true;
+  } catch (error) {
+    console.error(`GitHub API Error (updateWhitelist): Status ${error.status}, Message: ${error.message}`);
+    await sendActionLogToDiscord( 'GitHub Whitelist Update Error', `Failed to update whitelist: ${error.message}`, null, 0xFF0000);
+    const newError = new Error(`Failed to update whitelist on GitHub. Original: ${error.message}`);
+    newError.cause = error;
+    throw newError;
+  }
 }
 
 const SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT = '[Full script content attached as a .lua file due to length.]';
@@ -94,16 +185,14 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
     messageOptions.components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('get_asset_script_from_log')
-        .setLabel('Download Found Assets') // UPDATED LABEL
+        .setLabel('Download Found Assets')
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(!fullScriptContent || fullScriptContent.trim().length === 0) // Keep disabled if no script to parse
+        .setDisabled(!fullScriptContent || fullScriptContent.trim().length === 0)
     ));
     return channel.send(messageOptions);
   } catch (error) { console.error('Discord sendToDiscordChannel (script log) error:', error); }
 }
 
-async function handleBlacklist(interaction) { /* ... (same as previous working version) ... */ }
-// Blacklist function from previous correct version
 async function handleBlacklist(interaction) {
   let hasRepliedOrDeferred = false;
   const originalMessageURL = interaction.message.url;
@@ -150,23 +239,25 @@ async function handleBlacklist(interaction) {
     let whitelist;
     try { whitelist = await getWhitelistFromGitHub(); }
     catch (ghError) {
-      console.error("Blacklist: GitHub fetch whitelist error:", ghError);
-      await sendActionLogToDiscord('Blacklist Failed - GitHub Error', `Fetching whitelist failed: ${ghError.message}`, interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+      // sendActionLogToDiscord is now called within getWhitelistFromGitHub for fetch errors
       return interaction.editReply({ content: `Error fetching whitelist: ${ghError.message}` });
     }
-    const targetEntryIndex = whitelist.findIndex(entry => entry.Discord === targetUserId);
+    if (!Array.isArray(whitelist)) { // Should be caught by getWhitelistFromGitHub, but as a safeguard
+        await sendActionLogToDiscord('Blacklist Failed - Whitelist Data Malformed', 'Received non-array whitelist data after GitHub fetch.', interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+        return interaction.editReply({ content: 'Error: Whitelist data is malformed.' });
+    }
+    const targetEntryIndex = whitelist.findIndex(entry => entry && entry.Discord === targetUserId);
     if (targetEntryIndex === -1) {
       const errorMsg = `User <@${targetUserId}> (Roblox: ${robloxUsername}) not found in whitelist.`;
       console.log(errorMsg);
-      await sendActionLogToDiscord('Blacklist Failed - User Not Found', errorMsg, interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+      await sendActionLogToDiscord('Blacklist Warning - User Not Found', errorMsg, interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       return interaction.editReply({ content: errorMsg });
     }
     const targetEntry = whitelist[targetEntryIndex];
-    const newWhitelist = whitelist.filter(entry => entry.Discord !== targetUserId);
+    const newWhitelist = whitelist.filter(entry => entry && entry.Discord !== targetUserId);
     try { await updateWhitelistOnGitHub(newWhitelist, `Blacklist ${targetEntry.User} by ${interaction.user.tag}`); }
     catch (ghError) {
-      console.error("Blacklist: GitHub update whitelist error:", ghError);
-      await sendActionLogToDiscord('Blacklist Failed - GitHub Error', `Updating whitelist failed: ${ghError.message}`, interaction, 0xFF0000, [{name: "Target User", value: `<@${targetUserId}> (${robloxUsername})`}, {name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+      // sendActionLogToDiscord is now called within updateWhitelistOnGitHub for update errors
       return interaction.editReply({ content: `Error updating whitelist: ${ghError.message}` });
     }
     let rolesRemovedMessage = "User not in this server or no relevant roles.";
@@ -201,123 +292,109 @@ async function handleBlacklist(interaction) {
   }
 }
 
-
 async function handleGetAssetOrScript(interaction) {
   let hasRepliedOrDeferredAsset = false;
-  const originalMessageURL = interaction.message.url; // For logging context
-
+  const originalMessageURL = interaction.message.url;
   try {
     await interaction.deferReply({ ephemeral: true });
     hasRepliedOrDeferredAsset = true;
     const originalMessage = interaction.message;
     let scriptContentToAnalyze = null;
-
     const logAttachment = originalMessage.attachments.first();
     if (logAttachment?.name.endsWith('.lua')) {
-      try {
-        scriptContentToAnalyze = (await axios.get(logAttachment.url, { responseType: 'text' })).data;
-      } catch (fetchError) {
-        console.warn("Failed to fetch script from attachment URL for asset parsing:", fetchError.message);
-        // Don't error out yet, script might be in embed
-      }
+      try { scriptContentToAnalyze = (await axios.get(logAttachment.url, { responseType: 'text' })).data; }
+      catch (fetchError) { console.warn("Failed to fetch script from attachment URL for asset parsing:", fetchError.message); }
     }
-    
-    if (!scriptContentToAnalyze) { // If not found in attachment or fetch failed
+    if (!scriptContentToAnalyze) {
       const embed = originalMessage.embeds[0];
       if (embed?.description) {
         const match = embed.description.match(/```lua\n([\s\S]*?)\n```/);
-        if (match && match[1] !== SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT) {
-          scriptContentToAnalyze = match[1];
-        }
+        if (match && match[1] !== SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT) scriptContentToAnalyze = match[1];
       }
     }
-
     if (!scriptContentToAnalyze) {
       await sendActionLogToDiscord('Asset Download Failed - No Script', 'Could not find script content in the log message to analyze.', interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       return interaction.editReply({ content: 'No script content found to analyze for assets.' });
     }
-
     const assetIds = new Set();
     const regexes = [
-      /require\s*\(\s*(\d+)\s*\)/g,
-      /(?:GetObjects|InsertService:LoadAsset(?:Version)?)\s*\(\s*(?:["']rbxassetid:\/\/(\d+)["']|(\d+))\s*\)/gi, // Catches rbxassetid://id or just id
-      /Content\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /Image\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /Texture(?:Id)?\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
-      /SoundId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
+      /require\s*\(\s*(\d+)\s*\)/g, /(?:GetObjects|InsertService:LoadAsset(?:Version)?)\s*\(\s*(?:["']rbxassetid:\/\/(\d+)["']|(\d+))\s*\)/gi,
+      /Content\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi, /Image\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
+      /Texture(?:Id)?\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi, /SoundId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
       /MeshId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
     ];
-
-    for (const regex of regexes) {
-      let match;
-      while ((match = regex.exec(scriptContentToAnalyze)) !== null) {
-        assetIds.add(match[1] || match[2]); // Use match[1] if it exists (rbxassetid part), else match[2] (direct id)
-      }
-    }
-    
-    const uniqueAssetIds = Array.from(assetIds).filter(id => id && /^\d+$/.test(id)); // Filter out null/undefined/non-numeric and ensure it's numeric
+    for (const regex of regexes) { let match; while ((match = regex.exec(scriptContentToAnalyze)) !== null) assetIds.add(match[1] || match[2]); }
+    const uniqueAssetIds = Array.from(assetIds).filter(id => id && /^\d+$/.test(id));
     let replyContent = "No downloadable asset IDs found in the script.";
     const assetFiles = [];
-
     if (uniqueAssetIds.length > 0) {
-      const assetLinks = [];
-      let assetsProcessed = 0;
+      const assetLinks = []; let assetsProcessed = 0;
       for (const assetId of uniqueAssetIds) {
-        if (assetsProcessed >= 10) { // Discord allows max 10 attachments
-            console.warn("Reached attachment limit for asset download, truncating.");
-            break;
-        }
+        if (assetsProcessed >= 10) { console.warn("Reached attachment limit for asset download, truncating."); break; }
         const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file. Use the ID on the Roblox website or in Studio.\nprint("Asset ID: ${assetId}")`;
-        const assetFile = new AttachmentBuilder(Buffer.from(placeholderRbxmContent, 'utf-8'), { name: `${assetId}.rbxm` });
-        assetFiles.push(assetFile);
+        assetFiles.push(new AttachmentBuilder(Buffer.from(placeholderRbxmContent, 'utf-8'), { name: `${assetId}.rbxm` }));
         assetLinks.push(`[${assetId}](https://www.roblox.com/library/${assetId})`);
         assetsProcessed++;
       }
-
       if (assetFiles.length > 0) {
         replyContent = `Found Asset ID(s) - Placeholder .rbxm files attached:\n${assetLinks.join('\n')}`;
-         await sendActionLogToDiscord('Assets Found in Script', `User requested assets. Found: ${assetLinks.join(', ')}. Sending ${assetFiles.length} placeholder files.`, interaction, 0x00FF00, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+        await sendActionLogToDiscord('Assets Found & Sent', `User requested assets. Found: ${assetLinks.join(', ')}. Sent ${assetFiles.length} placeholder rbxm files.`, interaction, 0x00FF00, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       } else {
-        // This case should be rare if uniqueAssetIds.length > 0, but good for safety
         replyContent = "Found asset IDs, but encountered an issue preparing them for download.";
-        await sendActionLogToDiscord('Asset Download Issue', replyContent, interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+        await sendActionLogToDiscord('Asset Download Issue - Preparation', replyContent, interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       }
     } else {
-        await sendActionLogToDiscord('No Assets Found', 'User requested assets, but no recognized IDs were found in the script.', interaction, 0xADD8E6, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]); // Light blue for info
+      await sendActionLogToDiscord('No Assets Found in Script', 'User requested assets, but no recognized IDs were found in the script.', interaction, 0xADD8E6, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
     }
-
-    await interaction.editReply({ content: replyContent, files: assetFiles, ephemeral: true }); // assetFiles will be empty if none found
-
+    await interaction.editReply({ content: replyContent, files: assetFiles, ephemeral: true });
   } catch (error) {
     console.error('Get Asset/Script error:', error);
     await sendActionLogToDiscord('Get Asset/Script Failed - Unexpected Error', `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : "N/A"}`, interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
-    if (hasRepliedOrDeferredAsset && !interaction.replied) {
-        await interaction.editReply({ content: 'Error processing asset download request. Admins notified.' }).catch(console.error);
-    } else if (!hasRepliedOrDeferredAsset && !interaction.replied) {
-        await interaction.reply({ content: 'Error processing asset download request. Admins notified.', ephemeral: true }).catch(console.error);
-    }
+    if (hasRepliedOrDeferredAsset && !interaction.replied) await interaction.editReply({ content: 'Error processing asset download request. Admins notified.' }).catch(console.error);
+    else if (!hasRepliedOrDeferredAsset && !interaction.replied) await interaction.reply({ content: 'Error processing asset download request. Admins notified.', ephemeral: true }).catch(console.error);
   }
 }
 
-// --- Express Routes --- (Assume these are correct from previous versions)
+// --- Express Routes ---
 app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
+
 app.get('/verify/:username', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   const username = req.params.username;
   if (!username) return res.status(400).json({ status: 'error', message: 'Username required.' });
+  let whitelist;
   try {
-    const whitelist = await getWhitelistFromGitHub();
-    const foundUser = whitelist.find(user => user.User && user.User.toLowerCase() === username.toLowerCase());
-    if (!foundUser) return res.status(404).json({ status: 'error', message: "User not found." });
-    res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist } });
-  } catch (error) { console.error(`Verify error for ${username}:`, error.message); res.status(500).json({ status: 'error', message: "Internal server error." }); }
+    whitelist = await getWhitelistFromGitHub();
+    if (!Array.isArray(whitelist)) { // Safeguard, though getWhitelistFromGitHub should throw if not array
+        console.error(`Verify error for ${username}: Whitelist data from GitHub was not an array. Type: ${typeof whitelist}`);
+        await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data from GitHub was not an array. Type received: ${typeof whitelist}. This indicates a problem with getWhitelistFromGitHub or the Whitelist.json file structure.`, null, 0xFF0000);
+        return res.status(500).json({ status: 'error', message: "Internal server error: Whitelist data malformed." });
+    }
+    const foundUser = whitelist.find(user => user && typeof user.User === 'string' && user.User.toLowerCase() === username.toLowerCase());
+    if (!foundUser) {
+      console.log(`/verify/${username}: User not found in whitelist.`);
+      return res.status(404).json({ status: 'error', message: "User not found in whitelist." });
+    }
+    console.log(`/verify/${username}: User found.`);
+    res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
+  } catch (error) {
+    console.error(`Verify error for ${username} (caught in route): ${error.message}`);
+    // Logging to Discord channel is now primarily handled within getWhitelistFromGitHub if it's a fetch/parse error
+    // If the error is different, it means something else went wrong in this route's try block.
+    if (!(error.message.includes("Failed to fetch or parse whitelist from GitHub"))) {
+        await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
+    }
+    res.status(500).json({ status: 'error', message: "Internal server error during verification." });
+  }
 });
-app.get('/download/:assetId', async (req, res) => { // This is a general placeholder endpoint, not directly used by the button's new logic
+
+app.get('/download/:assetId', async (req, res) => {
   const assetId = req.params.assetId;
   if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
   const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file. Use the ID on the Roblox website or in Studio.`;
   res.set({ 'Content-Type': 'application/rbxm', 'Content-Disposition': `attachment; filename="${assetId}.rbxm"` }).send(placeholderRbxmContent);
 });
+
 app.post('/send/scriptlogs', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   if (req.headers['authorization'] !== config.API_KEY) return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
@@ -329,6 +406,7 @@ app.post('/send/scriptlogs', async (req, res) => {
     res.status(200).json({ status: 'success', message: 'Log received.', logId: generateLogId() });
   } catch (error) { console.error('Error /send/scriptlogs:', error.message); res.status(500).json({ status: 'error', message: "Processing script log failed." }); }
 });
+
 app.get('/scripts/LuaMenu', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   try {
