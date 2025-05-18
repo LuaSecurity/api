@@ -80,10 +80,10 @@ const discordClient = new Client({
 
 // --- In-memory queue for scripts ---
 // For production, consider a more persistent store like Redis
-const scriptQueue = new Map(); // Key: robloxUsername, Value: scriptContent
+const scriptQueue = new Map();
 
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' })); // For form data from executor potentially
+app.use(bodyParser.json({ limit: '500mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
 
 // --- Session and Passport Setup ---
 app.use(session({
