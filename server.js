@@ -2,39 +2,15 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
-const session = require('express-session');
-const passport = require('passport');
-const DiscordStrategy = require('passport-discord').Strategy;
+// const crypto = require('crypto'); // Não será mais usado diretamente se generateLogId for removido
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType, ChannelType } = require('discord.js');
+// Octokit, Passport, Session, etc., removidos pois eram do executor/auth
 
 // Config from environment variables
 const config = {
-  API_KEY: process.env.API_KEY, 
-  GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
-  GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-
-  DISCORD_CLIENT_ID: process.env.BOT_CLIENT_ID,
-  DISCORD_CLIENT_SECRET: process.env.BOT_CLIENT_SECRET,
-  DISCORD_CALLBACK_URL: process.env.REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/auth/discord/callback`,
-  TARGET_GUILD_ID: process.env.SERVER_ID,
-
   LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || '1331021897735081984', 
-  GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
-  GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
-  GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
-  WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
-  ROLES: { 
-    STANDARD: process.env.ROLE_STANDARD_ID || '1330552089759191064',
-    PREMIUM: process.env.ROLE_PREMIUM_ID || '1333286640248029264',
-    ULTIMATE: process.env.ROLE_ULTIMATE_ID || '1337177751202828300'
-  },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 1000,
-  SESSION_SECRET: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-  ADD_USER_TO_GUILD_IF_MISSING: process.env.ADD_USER_TO_GUILD_IF_MISSING === 'true',
 
   WEBHOOK_GAMELOGS_2_9: process.env.WEBHOOK_GAMELOGS_2_9,
   WEBHOOK_GAMELOGS_10_49: process.env.WEBHOOK_GAMELOGS_10_49,
@@ -45,14 +21,9 @@ const config = {
   GAME_STATS_TOTAL_GAMES_VC_ID: process.env.GAME_STATS_TOTAL_GAMES_VC_ID || '1373733192229720225',
 };
 
-if (/*!config.API_KEY || // API_KEY removida da verificação para Gamelogs, mas pode ser usada em outros locais */
-    !config.GITHUB_TOKEN || 
-    !config.DISCORD_BOT_TOKEN || 
-    !config.GITHUB_LUA_MENU_URL ||
-    !config.DISCORD_CLIENT_ID ||
-    !config.DISCORD_CLIENT_SECRET ||
-    !config.TARGET_GUILD_ID) {
-  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file.');
+// --- VALIDAÇÕES DE CONFIGURAÇÃO ESSENCIAL ---
+if (!config.DISCORD_BOT_TOKEN) {
+  console.error('FATAL ERROR: Missing DISCORD_BOT_TOKEN. Please check your .env file.');
   process.exit(1);
 }
 if (!config.WEBHOOK_GAMELOGS_2_9 || !config.WEBHOOK_GAMELOGS_10_49 || !config.WEBHOOK_GAMELOGS_50_200 || !config.WEBHOOK_GAMELOGS_PREMIUM) {
@@ -65,95 +36,53 @@ if (!config.GAME_STATS_CURRENT_ACTIVE_VC_ID || !config.GAME_STATS_TOTAL_GAMES_VC
 }
 
 const app = express();
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
 const discordClient = new Client({
   intents: [
-    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
+    GatewayIntentBits.Guilds,
+    // GatewayIntentBits.GuildMessages, // Não estritamente necessário se não houver comandos de chat
+    // GatewayIntentBits.MessageContent, // Mesma razão acima
+    // GatewayIntentBits.GuildMembers // Necessário se você for buscar membros para algo, mas removido com executor
   ]
 });
 
-const scriptQueue = new Map();
-const gameStats = new Map(); 
-const GAME_DATA_EXPIRY_MS = 30 * 60 * 1000;
+const gameStats = new Map(); // Key: gameId, Value: { ..., lastUpdate: timestamp }
+const GAME_DATA_EXPIRY_MS = 30 * 60 * 1000; // 30 minutos
 
+// Debounce para atualização dos nomes dos canais de voz
 let voiceChannelUpdateTimeout = null;
-const VOICE_CHANNEL_UPDATE_DEBOUNCE_MS = 10 * 60 * 1000; // Não atualizar nomes de canal mais de uma vez a cada 10 minutos
+const VOICE_CHANNEL_UPDATE_DEBOUNCE_MS = 5 * 60 * 1000; // Reduzido para 5 minutos para testes, ajuste conforme necessário (era 10min)
 
 
 app.use(bodyParser.json({ limit: '500mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
-app.use(session({
-  secret: config.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  store: process.env.NODE_ENV === 'production' ? undefined : undefined, 
-}));
-if (process.env.NODE_ENV !== 'production') {
-    console.warn("Warning: connect.session() MemoryStore is not designed for a production environment.");
-}
-app.use(passport.initialize());
-app.use(passport.session());
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser(async (obj, done) => done(null, obj));
-passport.use(new DiscordStrategy({
-  clientID: config.DISCORD_CLIENT_ID,
-  clientSecret: config.DISCORD_CLIENT_SECRET,
-  callbackURL: config.DISCORD_CALLBACK_URL,
-  scope: ['identify', 'guilds', 'guilds.join']
-}, async (accessToken, refreshToken, profile, done) => {
-  try {
-    const user = { id: profile.id, username: profile.username, discriminator: profile.discriminator, avatar: profile.avatar, guilds: profile.guilds, accessToken: accessToken };
-    return done(null, user);
-  } catch (err) { return done(err, null); }
-}));
 
-function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
-async function sendActionLogToDiscord(title, description, interactionOrUser, color = 0x0099FF, additionalFields = []) {
+// --- FUNÇÕES HELPER PARA GAMELOGS E ESTATÍSTICAS ---
+
+async function sendAdminNotification(title, description, color = 0xFF0000, additionalFields = []) {
     try {
-        if (!config.LOG_CHANNEL_ID) { console.warn("sendActionLogToDiscord: LOG_CHANNEL_ID not configured."); return; }
+        if (!config.LOG_CHANNEL_ID || !discordClient.isReady()) {
+            console.warn(`AdminNotification: LOG_CHANNEL_ID (${config.LOG_CHANNEL_ID}) not configured or client not ready. Skipping notification: ${title}`);
+            return;
+        }
         const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID).catch(err => {
-            console.error("sendActionLogToDiscord: Failed to fetch log channel:", err.message); return null;
+            console.error(`AdminNotification: Failed to fetch log channel. Error: ${err.message}`);
+            return null;
         });
         if (!logChannel) return;
+
         const logEmbed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description.substring(0, 4000)).setTimestamp();
-        if (interactionOrUser) {
-            if (interactionOrUser.user) {
-                 logEmbed.addFields({ name: 'Initiated By', value: `${interactionOrUser.user.tag} (<@${interactionOrUser.user.id}>)`, inline: true });
-                 if (interactionOrUser.guild) logEmbed.addFields({ name: 'Context', value: `Guild: ${interactionOrUser.guild.name}\nChannel: ${interactionOrUser.channel?.name || 'N/A'}`, inline: true });
-            } else if (interactionOrUser.id && interactionOrUser.username) {
-                 logEmbed.addFields({ name: 'By User', value: `${interactionOrUser.username}#${interactionOrUser.discriminator} (<@${interactionOrUser.id}>)`, inline: true });
-            }
-        }
         additionalFields.forEach(field => { if (logEmbed.data.fields && logEmbed.data.fields.length < 24) logEmbed.addFields(field);});
+        
         await logChannel.send({ embeds: [logEmbed] });
-    } catch (logSendError) { console.error("CRITICAL: Failed to send action log:", logSendError.message); }
+    } catch (logSendError) {
+        console.error(`CRITICAL: Failed to send admin notification to Discord: ${logSendError.message}`);
+    }
 }
-async function getWhitelistFromGitHub() {
-  let rawDataContent; 
-  try {
-    const response = await octokit.rest.repos.getContent({
-      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
-      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
-      headers: { 'Accept': 'application/vnd.github.v3.raw', 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-    });
-    rawDataContent = response.data; 
-    if (response.status !== 200) { throw new Error(`GitHub API request failed with status ${response.status}`); }
-    if (typeof rawDataContent === 'string') {
-      if (rawDataContent.trim() === "") { return []; }
-      return JSON.parse(rawDataContent);
-    } else if (typeof rawDataContent === 'object' && rawDataContent !== null && Array.isArray(rawDataContent)) {
-      return rawDataContent;
-    } else { throw new Error('Unexpected GitHub response format for whitelist content.'); }
-  } catch (error) {
-    console.error(`Error in getWhitelistFromGitHub: ${error.message}`);
-    throw new Error(`Failed to fetch or parse whitelist from GitHub. Original: ${error.message}`);
-  }
-}
+
 
 function parseGameDataFromEmbed(description) {
     if (!description) return null;
-    const parseNumeric = (str) => { 
+    const parseNumeric = (str) => {
         if (!str) return 0;
         const cleaned = String(str).replace(/[^\d,]/g, '').replace(',', ''); 
         const num = parseInt(cleaned, 10);
@@ -201,7 +130,7 @@ async function actualUpdateDiscordVoiceChannelNames() {
             if (channel && channel.type === ChannelType.GuildVoice) {
                 const newName = `Current active: ${formatNumber(totalActivePlayers)}`;
                 if (channel.name !== newName) {
-                    await channel.setName(newName, 'Updating game stats');
+                    await channel.setName(newName, 'Updating game statistics');
                     console.log(`[VoiceUpdate] 'Current active' VC updated to: ${newName}`);
                 }
             } else { console.warn(`[VoiceUpdate] Active players VC (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) not found/not voice.`); }
@@ -213,7 +142,7 @@ async function actualUpdateDiscordVoiceChannelNames() {
             if (channel && channel.type === ChannelType.GuildVoice) {
                 const newName = `Total Games: ${formatNumber(totalUniqueGames)}`;
                 if (channel.name !== newName) {
-                    await channel.setName(newName, 'Updating game stats');
+                    await channel.setName(newName, 'Updating game statistics');
                     console.log(`[VoiceUpdate] 'Total Games' VC updated to: ${newName}`);
                 }
             } else { console.warn(`[VoiceUpdate] Total games VC (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}) not found/not voice.`);}
@@ -236,7 +165,7 @@ function scheduleVoiceChannelUpdate() {
     }, VOICE_CHANNEL_UPDATE_DEBOUNCE_MS);
 }
 
-// --- HANDLER DAS ROTAS DE GAMELOG (SEM COOLDOWN PARA WEBHOOK PROVIDER) ---
+// --- HANDLER DAS ROTAS DE GAMELOG (PÚBLICO, SEM COOLDOWNS INTERNOS DE ENVIO DE WEBHOOK) ---
 async function gameLogRequestHandler(req, res, webhookUrl, tierName) {
     const sourceIp = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for']?.split(',').shift();
     // console.log(`[Gamelog:${tierName}] PUBLIC Request from IP: ${sourceIp}, Path: ${req.path}`);
@@ -246,18 +175,21 @@ async function gameLogRequestHandler(req, res, webhookUrl, tierName) {
     }
     if (!webhookUrl) {
         console.error(`[Gamelog:${tierName}] CRITICAL: webhookUrl UNDEFINED for tier. Path: ${req.path}`);
+        await sendAdminNotification("Config Error Gamelog", `Webhook URL for tier ${tierName} is missing. Request path: ${req.path}.`);
         return res.status(500).json({ status: 'error', message: 'Erro de config: URL de webhook ausente.' });
     }
 
     const embedData = req.body.embeds[0];
+    
     // Tentativa de parsear dados do jogo para estatísticas locais
     if (embedData && embedData.description) {
         const gameData = parseGameDataFromEmbed(embedData.description);
         if (gameData && gameData.gameId) {
             const now = Date.now();
-            let gameEntry = gameStats.get(gameData.gameId) || { ...gameData, lastUpdate: 0 };
-            gameEntry = { ...gameEntry, ...gameData, lastUpdate: now };
-            gameStats.set(gameData.gameId, gameEntry);
+            // Prioriza dados existentes em gameStats e atualiza com novos.
+            const existingEntry = gameStats.get(gameData.gameId) || {};
+            const updatedEntry = { ...existingEntry, ...gameData, lastUpdate: now };
+            gameStats.set(gameData.gameId, updatedEntry);
             // console.log(`[Gamelog:${tierName}] Stats locais atualizadas para GameID: ${gameData.gameId}`);
         } else {
             // console.warn(`[Gamelog:${tierName}] Não foi possível parsear gameId para stats. Desc: ${embedData.description.substring(0,100)}`);
@@ -267,109 +199,74 @@ async function gameLogRequestHandler(req, res, webhookUrl, tierName) {
     }
     
     // TENTA ENVIAR PARA O WEBHOOK PROVIDER (EX: webhook.lewisakura.moe) IMEDIATAMENTE
-    console.warn(`[Gamelog:${tierName}] REMOVING COOLDOWN! Attempting to forward to ${webhookUrl.substring(0,50)} for GameID: ${embedData?.description?.match(/games\/(\d+)/)?.[1] || 'N/A'}. THIS MAY CAUSE ISSUES WITH THE WEBHOOK PROVIDER.`);
+    // console.warn(`[Gamelog:${tierName}] SEM COOLDOWN INTERNO! Tentando encaminhar para ${webhookUrl.substring(0,50)} GameID: ${embedData?.description?.match(/games\/(\d+)/)?.[1] || 'N/A'}`);
     try {
-        await axios.post(webhookUrl, req.body, { 
-            // Dentro do gameLogRequestHandler, no axios.post:
+        await axios.post(webhookUrl, req.body, { // req.body aqui é o payload JSON completo da requisição original
             headers: { 
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            timeout: 10000 
+                'Content-Type': 'application/json',
+                // O User-Agent é definido automaticamente pelo Axios, mas pode ser sobrescrito se necessário:
+                // 'User-Agent': 'MinhaAplicacaoCustomizada/1.0 (+http://meusite.com/bot-info)'
+            }, 
+            timeout: 10000 // Timeout de 10 segundos para a requisição do webhook
         });
         
-        console.log(`[Gamelog:${tierName}] Encaminhado com sucesso (sem cooldown) para ${webhookUrl.substring(0,50)}.`);
-        res.status(200).json({ status: 'success', message: 'Game log recebido e encaminhado (sem cooldown).' });
+        // console.log(`[Gamelog:${tierName}] Encaminhado com sucesso para ${webhookUrl.substring(0,50)}.`);
+        res.status(200).json({ status: 'success', message: 'Game log recebido e encaminhado.' });
     
     } catch (error) {
         let errorDetail = error.message;
+        let responseStatus = "N/A";
+        let responseDataPreview = "N/A";
+
         if (error.response) {
-            errorDetail = `Webhook (sem cooldown) respondeu com Status ${error.response.status}`;
-            const responseDataPreview = typeof error.response.data === 'string' ? error.response.data.substring(0,200) : JSON.stringify(error.response.data).substring(0,200);
-            console.error(`[Gamelog:${tierName}] Webhook Error (sem cooldown): Status ${error.response.status}, Data: ${responseDataPreview}`);
-            // Aqui você poderia reenviar o erro para seu LOG_CHANNEL_ID se desejado.
-        } else {
-            console.error(`[Gamelog:${tierName}] Erro de encaminhamento (sem cooldown): ${errorDetail}`);
+            responseStatus = error.response.status;
+            errorDetail = `Webhook externo respondeu com Status ${responseStatus}`;
+            responseDataPreview = typeof error.response.data === 'string' ? error.response.data.substring(0, 200) : JSON.stringify(error.response.data).substring(0, 200);
+            console.error(`[Gamelog:${tierName}] Erro no Webhook Externo: Status ${responseStatus}, Data: ${responseDataPreview}, URL: ${webhookUrl.substring(0,70)}`);
+
+            if (responseStatus === 403) { // Erro "Forbidden" do provedor do webhook (ex: Cloudflare)
+                await sendAdminNotification(
+                    `Webhook Bloqueado (403) - Tier ${tierName}`,
+                    `O webhook para o tier ${tierName} (${webhookUrl.substring(0,70)}...) está retornando 403 (Forbidden).`+
+                    `Isso geralmente significa que um sistema de segurança (como Cloudflare) no lado do provedor do webhook está bloqueando as requisições deste servidor. `+
+                    `Verifique as configurações de firewall/WAF do provedor do webhook ou entre em contato com o administrador dele.`,
+                    0xFFA500, // Laranja
+                    [
+                        {name: "Webhook URL", value: webhookUrl},
+                        {name: "IP de Origem (Aproximado)", value: sourceIp},
+                        {name: "Resposta do Webhook (Preview)", value: `\`\`\`html\n${responseDataPreview}\n\`\`\``}
+                    ]
+                );
+            } else if (responseStatus === 429) { // Erro "Too Many Requests" do provedor do webhook
+                 await sendAdminNotification(
+                    `Webhook Rate Limited (429) - Tier ${tierName}`,
+                    `O webhook para o tier ${tierName} (${webhookUrl.substring(0,70)}...) está retornando 429 (Too Many Requests). `+
+                    `O provedor do webhook está limitando a taxa das requisições. Reduza a frequência de envio ou contate o administrador do webhook.`,
+                    0xFFD700, // Amarelo/Ouro
+                    [
+                        {name: "Webhook URL", value: webhookUrl},
+                        {name: "IP de Origem (Aproximado)", value: sourceIp},
+                    ]
+                );
+            }
+
+        } else { // Erros de rede, timeout, etc.
+            console.error(`[Gamelog:${tierName}] Erro de encaminhamento de rede/timeout: ${errorDetail}, URL: ${webhookUrl.substring(0,70)}`);
         }
-        res.status(502).json({ status: 'error', message: `Falha ao encaminhar (sem cooldown): ${errorDetail}` });
+        res.status(502).json({ status: 'error', message: `Falha ao encaminhar: ${errorDetail} (Status: ${responseStatus})` });
     }
     scheduleVoiceChannelUpdate(); // Agendar atualização dos canais de voz
 }
 
-async function ensureAuthenticatedAndAuthorized(req, res, next) { 
-  if (!req.isAuthenticated()) { return res.redirect('/auth/discord');}
-  const user = req.user;
-  let whitelist;
-  try { whitelist = await getWhitelistFromGitHub(); } catch (e) { console.error("Auth Middleware: Whitelist fetch error", e); return res.status(500).send("Error checking whitelist."); }
-  const userWhitelistEntry = whitelist.find(entry => entry && entry.Discord === user.id);
-  if (!userWhitelistEntry) { return res.status(403).send(`<h1>Access Denied</h1><p>Not whitelisted.</p><p><a href="/logout">Logout</a></p>`); }
-  const requiredRoleIds = Object.values(config.ROLES).filter(Boolean);
-  if (requiredRoleIds.length === 0) { req.robloxUsername = userWhitelistEntry.User; return next(); }
-  let member;
-  try {
-    const guild = await discordClient.guilds.fetch(config.TARGET_GUILD_ID);
-    if(!guild) return res.status(500).send("Config error: Target guild not accessible.");
-    member = await guild.members.fetch(user.id).catch(() => null);
-     if (!member && config.ADD_USER_TO_GUILD_IF_MISSING && user.accessToken) {
-        try { 
-            await guild.members.add(user.id, { accessToken: user.accessToken, roles: [] }); 
-            member = await guild.members.fetch(user.id); 
-        } catch (addError) { 
-            console.error(`Failed to add user ${user.id} to guild:`, addError);
-        }
-     }
-    if (!member) { return res.status(403).send(`<h1>Access Denied</h1><p>Not in Discord server.</p><p><a href="/logout">Logout</a></p>`);}
-    const hasRequiredRole = member.roles.cache.some(role => requiredRoleIds.includes(role.id));
-    if (!hasRequiredRole) { return res.status(403).send(`<h1>Access Denied</h1><p>Missing required roles.</p><p><a href="/logout">Logout</a></p>`); }
-    req.robloxUsername = userWhitelistEntry.User; 
-    next();
-  } catch (err) { console.error("Auth Middleware: Role/Guild check error", err); return res.status(500).send("Error verifying permissions."); }
-}
 
-app.get('/', (req, res) => { res.send("API is running. Login at /auth/discord. Executor at /executor."); });
-app.get('/auth/discord', passport.authenticate('discord'));
-app.get('/auth/discord/callback', passport.authenticate('discord', { failureRedirect: '/' }), async (req, res) => { res.redirect('/executor'); });
-app.get('/logout', (req, res, next) => {
-  req.logout(err => {
-    if (err) { return next(err); }
-    req.session.destroy(() => {
-      res.clearCookie('connect.sid');
-      res.redirect('/');
-    });
-  });
-});
-app.get('/executor', ensureAuthenticatedAndAuthorized, (req, res) => { res.send(`<h1>Executor Page</h1><p>Welcome ${req.user.username}#${req.user.discriminator}</p><p>Roblox: ${req.robloxUsername || 'N/A'}</p><textarea id="script" rows="10" cols="50"></textarea><button onclick="executeScript()">Execute</button><script>function executeScript(){ console.log('TODO: Execute', document.getElementById('script').value); }</script><a href="/logout">Logout</a>`); });
+// --- ROTAS DA APLICAÇÃO ---
 
-
-// --- ROTAS QUE AINDA PODEM PRECISAR DE API_KEY (EXEMPLO) ---
-// Certifique-se de que estas rotas, se existirem e precisarem de API Key, continuem a usá-la.
-// O pedido foi para remover API Key APENAS dos gamelogs.
-app.post('/send/scriptlogs', async (req, res) => { 
-    // Exemplo: Esta rota AINDA usa API_KEY
-    if (req.headers['authorization'] !== config.API_KEY) { 
-        return res.status(401).json({ status: 'error', message: 'Invalid API key for scriptlogs.' });
-    }
-    console.log("Received protected scriptlog:", req.body);
-    res.status(200).json({status: "success", message: "Scriptlog received (protected)"});
+// Rota raiz simples
+app.get('/', (req, res) => {
+    res.send('API de Gamelogs está funcionando. Use os endpoints /send/gamelogs/* para enviar dados.');
 });
 
-app.post('/queue/:username', async (req, res) => {
-    if (req.headers['authorization'] !== config.API_KEY ) { // Manteve a proteção de API Key aqui
-         return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
-    }
-    console.log("Received protected queue post for", req.params.username);
-    res.status(200).json({status: "success", message: "Queue post received (protected)"});
- });
-app.get('/queue/:username', async (req, res) => {
-    if (req.headers['authorization'] !== config.API_KEY && !isFromRoblox(req)) { // Manteve a proteção de API Key aqui
-        return res.status(401).send('Unauthorized');
-    }
-    console.log("Received protected queue get for", req.params.username);
-    res.status(200).json({status: "success", message: "Queue get received (protected)"});
-});
-
-
-// --- ROTAS DE GAMELOG (Chamando o handler modificado SEM COOLDOWN PARA WEBHOOK) ---
+// Endpoints de Gamelog
 app.post('/send/gamelogs/9', (req, res) => {
     gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_2_9, '2-9');
 });
@@ -383,40 +280,62 @@ app.post('/send/gamelogs/Premium', (req, res) => {
     gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_PREMIUM, 'Premium');
 });
 
+
+// --- EVENTOS DO DISCORD ---
+discordClient.on('ready', () => {
+  console.log(`Bot Discord logado como ${discordClient.user.tag}.`);
+  discordClient.user.setStatus('online'); // ou 'dnd', 'idle'
+  discordClient.user.setActivity('Monitorando Gamelogs', { type: ActivityType.Watching }); 
+  scheduleVoiceChannelUpdate(); // Agendar uma atualização inicial dos nomes dos canais
+});
+
+// Listener de interações simplificado (sem os botões do sistema de executor)
 discordClient.on('interactionCreate', async interaction => { 
   if (!interaction.isButton()) return;
-  async function handleBlacklist(interaction) { if(!interaction.replied && !interaction.deferred) await interaction.reply({content: "Blacklist (placeholder).", ephemeral: true}); }
-  async function handleGetAssetOrScript(interaction) { if(!interaction.replied && !interaction.deferred) await interaction.reply({content: "Get Asset (placeholder).", ephemeral: true}); }
+  
+  // Se você tiver outros botões que não são do executor, adicione a lógica aqui.
+  // Por enquanto, apenas um log de que um botão desconhecido foi pressionado.
+  console.log(`[Interaction] Botão com ID '${interaction.customId}' pressionado por ${interaction.user.tag}.`);
   try {
-    if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
-    else if (interaction.customId === 'get_asset_script_from_log') await handleGetAssetOrScript(interaction);
-  } catch (error) { console.error('Interaction error:', error); 
-    if(interaction.isRepliable()){
-        if(interaction.replied || interaction.deferred) await interaction.editReply({content: 'Error processing button.', ephemeral: true}).catch(()=>{});
-        else await interaction.reply({content: 'Error processing button.', ephemeral: true}).catch(()=>{});
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'Interação recebida, mas nenhuma ação configurada para este botão.', ephemeral: true });
     }
- }
-});
-discordClient.on('ready', () => {
-  console.log(`Bot logged in as ${discordClient.user.tag}.`);
-  discordClient.user.setStatus('dnd');
-  discordClient.user.setActivity('Managing Logs & Scripts', { type: ActivityType.Playing }); 
-  scheduleVoiceChannelUpdate();
+  } catch (error) {
+      console.error("[Interaction] Erro ao responder à interação de botão:", error);
+  }
 });
 
-process.on('unhandledRejection', (reason, promise) => { console.error('Unhandled Rejection:', reason, promise); });
-process.on('uncaughtException', (error, origin) => { console.error('Uncaught Exception:', error, origin); });
 
+// --- HANDLERS DE ERRO DE PROCESSO ---
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
+  // Em vez de JSON.stringify(promise), que pode ser um objeto grande e complexo:
+  sendAdminNotification('Unhandled Rejection no Servidor', `**Motivo:** ${reason}\n\nCheque os logs do servidor para mais detalhes.`, 0xCC0000)
+    .catch(e => console.error("Falha ao enviar log de unhandledRejection:", e));
+});
+process.on('uncaughtException', (error, origin) => {
+  console.error('Uncaught Exception:', error, 'Origem:', origin);
+  sendAdminNotification('Uncaught Exception no Servidor', `**Erro:** ${error.message}\n**Origem:** ${origin}\n\nStack: \`\`\`\n${error.stack ? error.stack.substring(0,1000) : 'N/A'}\n\`\`\``, 0xCC0000)
+   .catch(e => console.error("Falha ao enviar log de uncaughtException:", e));
+  // Considerar encerrar o processo para exceções não tratadas realmente graves após logar,
+  // pois o estado da aplicação pode estar corrompido. Render reiniciará o serviço.
+  // setTimeout(() => process.exit(1), 2000); // Dá tempo para o log enviar
+});
+
+
+// --- INICIALIZAÇÃO DO SERVIDOR ---
 async function startServer() {
   try {
     await discordClient.login(config.DISCORD_BOT_TOKEN);
     app.listen(config.PORT, () => {
-        console.log(`API on port ${config.PORT}. Bot connected.`);
-        console.log(`OAuth Redirect: ${config.DISCORD_CALLBACK_URL}`);
-        console.log(`Log Channel: ${config.LOG_CHANNEL_ID || 'NOT SET'}`);
-        console.log(`VC Active: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID || 'NOT SET'}, VC Total: ${config.GAME_STATS_TOTAL_GAMES_VC_ID || 'NOT SET'}`);
+        console.log(`API de Gamelogs escutando na porta ${config.PORT}. Bot Discord conectado.`);
+        console.log(`Canal de Admin Notificações (LOG_CHANNEL_ID): ${config.LOG_CHANNEL_ID || 'NÃO CONFIGURADO'}`);
+        console.log(`Canais de Voz para Stats: Ativos (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID || 'NÃO CONFIG.'}), Total (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID || 'NÃO CONFIG.'})`);
     });
-  } catch (error) { console.error('Startup failed:', error); process.exit(1); }
+  } catch (error) {
+    console.error('Falha Crítica na Inicialização do Servidor:', error);
+    process.exit(1); // Encerra se não conseguir iniciar
+  }
 }
 
 startServer();
