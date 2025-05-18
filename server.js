@@ -448,79 +448,95 @@ async function updateDiscordVoiceChannelNames() {
 }
 
 
-// Generic Game Log Request Handler
 async function gameLogRequestHandler(req, res, webhookUrl, tierName) {
-    const sourceIp = req.ip || req.connection?.remoteAddress;
-    console.log(`[Gamelog:${tierName}] Request received for endpoint: ${req.path} from IP: ${sourceIp}`);
+    const sourceIp = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for']?.split(',').shift();
+    console.log(`[Gamelog:${tierName}] PUBLIC Request received for endpoint: ${req.path} from IP: ${sourceIp}`); // Adicionado 'PUBLIC' para indicar a ausência de auth
     
-    if (req.headers['authorization'] !== config.API_KEY) {
-        console.warn(`[Gamelog:${tierName}] Unauthorized request from IP ${sourceIp}. Path: ${req.path}. API key mismatch or missing.`);
-        return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
-    }
-    // console.log(`[Gamelog:${tierName}] Request authorized with API Key from IP ${sourceIp}.`);
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // ATENÇÃO: A VERIFICAÇÃO DE API KEY FOI REMOVIDA DESTA FUNÇÃO CONFORME SOLICITADO
+    // ISSO TORNA ESTE ENDPOINT PÚBLICO E SUJEITO A ABUSO
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+    // Verifica se o corpo da requisição e os embeds existem
     if (!req.body || !req.body.embeds || !req.body.embeds.length) {
-        console.warn(`[Gamelog:${tierName}] Invalid/missing embed data. Body Preview:`, JSON.stringify(req.body).substring(0, 200));
-        return res.status(400).json({ status: 'error', message: 'Invalid or missing embed data.' });
+        console.warn(`[Gamelog:${tierName}] PUBLIC: Dados de embed inválidos/ausentes. Preview do Body:`, JSON.stringify(req.body).substring(0, 200));
+        return res.status(400).json({ status: 'error', message: 'Dados de embed inválidos ou ausentes.' });
     }
 
+    // Verifica se a URL do webhook para o tier específico está configurada
     if (!webhookUrl) {
-        console.error(`[Gamelog:${tierName}] CRITICAL: webhookUrl is UNDEFINED for this tier. Path: ${req.path}`);
-        await sendActionLogToDiscord('GameLog Config Error', `Webhook URL is MISSING for tier ${tierName} (Path: ${req.path}). Gamelog cannot be forwarded. Please check .env variables (WEBHOOK_GAMELOGS_...).`, null, 0xFF0000);
-        return res.status(500).json({ status: 'error', message: 'Internal server configuration error (webhook URL missing).' });
+        console.error(`[Gamelog:${tierName}] PUBLIC: CRÍTICO: webhookUrl está INDEFINIDO para este tier. Path: ${req.path}`);
+        // Evita enviar log para Discord sobre config interna em um endpoint público não autenticado,
+        // a menos que você queira logar tentativas de acesso a tiers não configurados.
+        // await sendActionLogToDiscord('Erro de Configuração GameLog', `Webhook URL está AUSENTE para o tier ${tierName} (Path: ${req.path}). O GameLog não pode ser encaminhado.`, null, 0xFF0000);
+        return res.status(500).json({ status: 'error', message: 'Erro interno de configuração do servidor (URL do webhook ausente para este tier).' });
     }
-    // console.log(`[Gamelog:${tierName}] Target webhook: ${webhookUrl.substring(0,60)}...`);
+    // console.log(`[Gamelog:${tierName}] PUBLIC: Target webhook: ${webhookUrl.substring(0,60)}...`);
 
     const embedData = req.body.embeds[0];
-    const gameData = parseGameDataFromEmbed(embedData.description);
+    if (!embedData || !embedData.description) {
+        console.warn(`[Gamelog:${tierName}] PUBLIC: Dados do embed ou descrição ausentes no payload. Embed recebido:`, JSON.stringify(embedData).substring(0, 200));
+    }
+    
+    const gameData = parseGameDataFromEmbed(embedData ? embedData.description : null);
 
     if (gameData && gameData.gameId) {
         const oldData = gameStats.get(gameData.gameId);
         gameStats.set(gameData.gameId, { ...gameData, lastUpdate: Date.now() });
-        // console.log(`[Gamelog:${tierName}] Stored/Updated game ID: ${gameData.gameId} ('${gameData.gameName}'), Active: ${gameData.activePlayers}, ServerP: ${gameData.serverPlayers}, Visits: ${gameData.visits}, Favs: ${gameData.favorites}. New entry: ${!oldData}`);
+        console.log(`[Gamelog:${tierName}] PUBLIC: Armazenado/Atualizado game ID: ${gameData.gameId} ('${gameData.gameName}'), Active: ${gameData.activePlayers}, Visits: ${gameData.visits}. Nova entrada: ${!oldData}`);
     } else {
-        console.warn(`[Gamelog:${tierName}] Could not parse gameId or other crucial data. GameId: ${gameData?.gameId}. Description snippet: ${(embedData.description || '').substring(0, 150)}...`);
+        console.warn(`[Gamelog:${tierName}] PUBLIC: Não foi possível parsear um gameId válido ou outros dados cruciais para estatísticas. GameId parseado: ${gameData?.gameId}. GameName: ${gameData?.gameName}. Snippet da Descrição: ${(embedData && embedData.description || '').substring(0, 150)}...`);
     }
-
-    // console.log(`[Gamelog:${tierName}] Attempting to forward to webhook: ${webhookUrl.substring(0,60)}...`);
+    
     try {
-        const webhookResponse = await axios.post(webhookUrl, req.body, {
+        // Como não há API key no corpo para remover (a menos que o cliente ainda envie),
+        // encaminhamos req.body diretamente.
+        const bodyParaEncaminhar = { ...req.body };
+        // Se, por acaso, o cliente ainda enviar o campo 'apiKey' no corpo e você quiser removê-lo ANTES de encaminhar:
+        if (bodyParaEncaminhar.apiKey) {
+            // delete bodyParaEncaminhar.apiKey; // Descomente se quiser remover o campo 'apiKey' do corpo se presente
+        }
+        
+        await axios.post(webhookUrl, bodyParaEncaminhar, {
             headers: { 'Content-Type': 'application/json' },
-            timeout: 10000 // 10 second timeout
+            timeout: 10000 // 10 segundos de timeout
         });
-        // console.log(`[Gamelog:${tierName}] Successfully forwarded. Webhook Status: ${webhookResponse.status}.`);
-        res.status(200).json({ status: 'success', message: 'Game log received and forwarded.' });
+        // console.log(`[Gamelog:${tierName}] PUBLIC: Encaminhado com sucesso para o webhook do tier.`);
+        res.status(200).json({ status: 'success', message: 'Game log recebido e encaminhado.' });
 
-        await updateDiscordVoiceChannelNames(); // Update stats display on successful log
+        if (gameData && gameData.gameId) {
+             await updateDiscordVoiceChannelNames(); 
+        }
 
     } catch (error) {
         let errorDetail = error.message;
-        let responseDetails = {};
+        let responseBodyPreview = "N/A";
+
         if (error.response) {
-            // console.error(`[Gamelog:${tierName}] Webhook Error! Status: ${error.response.status}. URL: ${webhookUrl.substring(0,60)}...`);
-            // console.error(`[Gamelog:${tierName}] Webhook Error Data:`, JSON.stringify(error.response.data).substring(0, 300));
-            errorDetail = `Webhook responded with Status ${error.response.status}`;
-            responseDetails = { name: "Webhook Response", value: `\`\`\`json\n${JSON.stringify(error.response.data, null, 2).substring(0, 1000)}\n\`\`\``};
+            errorDetail = `Webhook respondeu com Status ${error.response.status}`;
+            responseBodyPreview = JSON.stringify(error.response.data).substring(0,300);
         } else if (error.request) {
-            // console.error(`[Gamelog:${tierName}] Webhook Error! No response received. URL: ${webhookUrl.substring(0,60)}...`);
-            errorDetail = 'No response from webhook server (timeout or connection issue)';
-        } else {
-            // console.error(`[Gamelog:${tierName}] Webhook Error! Error setting up request. URL: ${webhookUrl.substring(0,60)}... Message: ${error.message}`);
+            errorDetail = 'Sem resposta do servidor webhook (timeout ou problema de conexão)';
         }
-        console.error(`[Gamelog:${tierName}] Failed to forward log for gameId '${gameData?.gameId || 'N/A'}'. Error: ${errorDetail}`);
+        console.error(`[Gamelog:${tierName}] PUBLIC: Falha ao encaminhar log para gameId '${gameData?.gameId || 'N/A'}'. Erro: ${errorDetail}`);
         
-        const fields = [{ name: "Webhook URL", value: webhookUrl }, { name: "Error", value: errorDetail.substring(0,1020) }];
-        if (Object.keys(responseDetails).length > 0) fields.push(responseDetails);
-        if (gameData?.gameId) fields.push({ name: "Game ID (parsed)", value: gameData.gameId, inline: true});
-        if (gameData?.gameName) fields.push({ name: "Game Name (parsed)", value: gameData.gameName.substring(0,100), inline: true});
+        // Considerar se deve enviar este log de erro para o Discord, pois pode ser spamado se o endpoint for abusado.
+        const fields = [
+            { name: "Webhook URL", value: webhookUrl.substring(0,1000) },
+            { name: "Error", value: errorDetail.substring(0,1020) }
+        ];
+        if(responseBodyPreview !== "N/A") fields.push({name: "Preview da Resposta do Webhook", value: `\`\`\`\n${responseBodyPreview}\n\`\`\``});
+        if (gameData?.gameId) fields.push({ name: "Game ID (parseado)", value: gameData.gameId, inline: true});
+        if (gameData?.gameName) fields.push({ name: "Game Name (parseado)", value: gameData.gameName.substring(0,100), inline: true});
 
-
+        /* // Descomente com cautela para logar erros no Discord:
         await sendActionLogToDiscord(
-            'GameLog Webhook Forward Error',
-            `Failed to forward gamelog to webhook for tier **${tierName}**.`,
+            'Erro ao Encaminhar GameLog (Público)',
+            `Falha ao encaminhar gamelog (endpoint público) para o webhook do tier **${tierName}**.`,
             null, 0xFF0000, fields
         );
-        res.status(502).json({ status: 'error', message: `Failed to forward game log: ${errorDetail}` });
+        */
+        res.status(502).json({ status: 'error', message: `Falha ao encaminhar game log: ${errorDetail}` });
     }
 }
 
