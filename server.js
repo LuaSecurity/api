@@ -69,15 +69,6 @@ const discordClient = new Client({
   ]
 });
 
-const app = express();
-const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
-const discordClient = new Client({
-  intents: [
-    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
-  ]
-});
-
 // --- In-memory queue for scripts ---
 // For production, consider a more persistent store like Redis
 const scriptQueue = new Map();
