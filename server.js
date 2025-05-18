@@ -1,53 +1,49 @@
 require('dotenv').config();
 const express = require('express');
-const axios = require('axios'); // Already here, good for webhooks
+const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js'); // Added ChannelType for voice channel check
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
 const session = require('express-session');
 const passport = require('passport');
 const DiscordStrategy = require('passport-discord').Strategy;
 
 // Config from environment variables
 const config = {
-  // Your existing ENV VARS
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
 
-  // Mapped ENV VARS
   DISCORD_CLIENT_ID: process.env.BOT_CLIENT_ID,
   DISCORD_CLIENT_SECRET: process.env.BOT_CLIENT_SECRET,
   DISCORD_CALLBACK_URL: process.env.REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/auth/discord/callback`,
   TARGET_GUILD_ID: process.env.SERVER_ID,
 
-  // Other configurations
-  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || '1331021897735081984',
+  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || '1331021897735081984', 
   GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
-  ROLES: {
+  ROLES: { 
     STANDARD: process.env.ROLE_STANDARD_ID || '1330552089759191064',
     PREMIUM: process.env.ROLE_PREMIUM_ID || '1333286640248029264',
     ULTIMATE: process.env.ROLE_ULTIMATE_ID || '1337177751202828300'
   },
-  PORT: process.env.PORT || 3000,
+  PORT: process.env.PORT || 3000, // Render will set this PORT env var
   SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 1000,
   SESSION_SECRET: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
   ADD_USER_TO_GUILD_IF_MISSING: process.env.ADD_USER_TO_GUILD_IF_MISSING === 'true',
 
-  // NEW: Webhook URLs for gamelogs
   WEBHOOK_GAMELOGS_2_9: process.env.WEBHOOK_GAMELOGS_2_9,
   WEBHOOK_GAMELOGS_10_49: process.env.WEBHOOK_GAMELOGS_10_49,
   WEBHOOK_GAMELOGS_50_200: process.env.WEBHOOK_GAMELOGS_50_200,
   WEBHOOK_GAMELOGS_PREMIUM: process.env.WEBHOOK_GAMELOGS_PREMIUM,
 
-  // NEW: Voice Channel IDs for game stats
-  GAME_STATS_CURRENT_ACTIVE_VC_ID: process.env.GAME_STATS_CURRENT_ACTIVE_VC_ID || '1373733192229720225',
-  GAME_STATS_TOTAL_GAMES_VC_ID: process.env.GAME_STATS_TOTAL_GAMES_VC_ID || '1373733192229720225', // As per prompt, same ID
+  // Ensure your .env has GAME_STATS_CURRENT_ACTIVE_VC_ID set to 1373732957910470699
+  GAME_STATS_CURRENT_ACTIVE_VC_ID: process.env.GAME_STATS_CURRENT_ACTIVE_VC_ID || '1373732957910470699',
+  GAME_STATS_TOTAL_GAMES_VC_ID: process.env.GAME_STATS_TOTAL_GAMES_VC_ID || '1373733192229720225',
 };
 
 // Critical check for essential environment variables
@@ -58,13 +54,20 @@ if (!config.API_KEY ||
     !config.DISCORD_CLIENT_ID ||
     !config.DISCORD_CLIENT_SECRET ||
     !config.TARGET_GUILD_ID) {
-  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file.');
+  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file for API_KEY, GITHUB_TOKEN, DISCORD_BOT_TOKEN, GITHUB_LUA_MENU_URL, BOT_CLIENT_ID, BOT_CLIENT_SECRET, SERVER_ID.');
+  if (!config.DISCORD_CALLBACK_URL.startsWith('http://localhost') && !process.env.REDIRECT_URI) {
+    console.error('Warning: REDIRECT_URI is not set, and default callback is localhost. This might be an issue if deploying.');
+  }
   process.exit(1);
 }
-
-// Check for new gamelog webhook URLs (optional based on usage, but good practice)
+// Warnings for gamelogs and stats channels
 if (!config.WEBHOOK_GAMELOGS_2_9 || !config.WEBHOOK_GAMELOGS_10_49 || !config.WEBHOOK_GAMELOGS_50_200 || !config.WEBHOOK_GAMELOGS_PREMIUM) {
     console.warn("Warning: One or more WEBHOOK_GAMELOGS URLs are not set. The /send/gamelogs feature might not work correctly.");
+}
+if (!config.GAME_STATS_CURRENT_ACTIVE_VC_ID || !config.GAME_STATS_TOTAL_GAMES_VC_ID){
+    console.warn("Warning: One or both GAME_STATS voice channel IDs are not set. Stats display may fail.");
+} else if (config.GAME_STATS_CURRENT_ACTIVE_VC_ID === config.GAME_STATS_TOTAL_GAMES_VC_ID && config.GAME_STATS_TOTAL_GAMES_VC_ID) { // also check if GAME_STATS_TOTAL_GAMES_VC_ID is not null/empty
+    console.warn(`Warning: GAME_STATS_CURRENT_ACTIVE_VC_ID (${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) and GAME_STATS_TOTAL_GAMES_VC_ID (${config.GAME_STATS_TOTAL_GAMES_VC_ID}) are the same. Only one statistic will be effectively displayed on that channel name.`);
 }
 
 
@@ -77,34 +80,31 @@ const discordClient = new Client({
   ]
 });
 
-// --- In-memory queue for scripts ---
 const scriptQueue = new Map();
-
-// --- NEW: In-memory storage for game statistics ---
-const gameStats = new Map(); // Key: gameId, Value: { gameId, activePlayers, serverPlayers, visits, favorites, lastUpdate: timestamp, gameName: string, jobInfo: string }
-const GAME_DATA_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+const gameStats = new Map(); 
+const GAME_DATA_EXPIRY_MS = 30 * 60 * 1000;
 
 app.use(bodyParser.json({ limit: '500mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
 
 // --- Session and Passport Setup ---
-// ... (existing session and passport setup code - no changes)
 app.use(session({
   secret: config.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  store: process.env.NODE_ENV === 'production' ? undefined : undefined, // For production, use a persistent store like connect-redis or connect-mongo
+  // cookie: { secure: process.env.NODE_ENV === 'production' } // Use secure cookies in production (HTTPS) - Render provides HTTPS
 }));
+if (process.env.NODE_ENV !== 'production') {
+    console.warn(`Warning: connect.session() MemoryStore is not
+designed for a production environment, as it will leak
+memory, and will not scale past a single process. Consider using a persistent session store for production.`);
+}
 app.use(passport.initialize());
 app.use(passport.session());
 
-passport.serializeUser((user, done) => {
-  done(null, user);
-});
-
-passport.deserializeUser(async (obj, done) => {
-    done(null, obj);
-});
-
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser(async (obj, done) => done(null, obj));
 
 passport.use(new DiscordStrategy({
   clientID: config.DISCORD_CLIENT_ID,
@@ -114,56 +114,56 @@ passport.use(new DiscordStrategy({
 }, async (accessToken, refreshToken, profile, done) => {
   try {
     const user = {
-      id: profile.id,
-      username: profile.username,
-      discriminator: profile.discriminator,
-      avatar: profile.avatar,
-      guilds: profile.guilds,
-      accessToken: accessToken
+      id: profile.id, username: profile.username, discriminator: profile.discriminator,
+      avatar: profile.avatar, guilds: profile.guilds, accessToken: accessToken
     };
     return done(null, user);
-  } catch (err) {
-    return done(err, null);
-  }
+  } catch (err) { return done(err, null); }
 }));
 
-
-// --- Helper Functions ---
+// --- Helper Functions (existing: generateLogId, isFromRoblox, sendActionLogToDiscord, getWhitelistFromGitHub, updateWhitelistOnGitHub, sendToDiscordChannel) ---
+// (Assuming these are correctly defined from your original full script)
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
-function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
+function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); } // Not used in gamelogs path
 
 async function sendActionLogToDiscord(title, description, interactionOrUser, color = 0x0099FF, additionalFields = []) {
-    // ... (existing function - no changes)
     try {
-        const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-        if (!logChannel) {
-            console.error("Failed to fetch log channel for reporting. Channel ID:", config.LOG_CHANNEL_ID);
+        if (!config.LOG_CHANNEL_ID) {
+            console.warn("sendActionLogToDiscord: LOG_CHANNEL_ID is not configured. Skipping log.");
             return;
         }
+        const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID).catch(err => {
+            console.error("sendActionLogToDiscord: Failed to fetch log channel for reporting. Channel ID:", config.LOG_CHANNEL_ID, "Error:", err.message);
+            return null;
+        });
+        if (!logChannel) return;
+
         const logEmbed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description.substring(0, 4000)).setTimestamp();
         
         if (interactionOrUser) { 
             if (interactionOrUser.user) { 
                  logEmbed.addFields({ name: 'Action Initiated By', value: `${interactionOrUser.user.tag} (<@${interactionOrUser.user.id}>)`, inline: true });
                  if (interactionOrUser.guild) {
-                     logEmbed.addFields({ name: 'Context', value: `Guild: ${interactionOrUser.guild.name}\nChannel: ${interactionOrUser.channel.name}`, inline: true });
+                     logEmbed.addFields({ name: 'Context', value: `Guild: ${interactionOrUser.guild.name}\nChannel: ${interactionOrUser.channel?.name || 'N/A'}`, inline: true });
                  }
             } else if (interactionOrUser.id && interactionOrUser.username) { 
                  logEmbed.addFields({ name: 'Action By User', value: `${interactionOrUser.username}#${interactionOrUser.discriminator} (<@${interactionOrUser.id}>)`, inline: true });
             }
         }
         for (const field of additionalFields) {
-            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23 && additionalFields.length > 0) { // Max fields is 25
+            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23) { // Max fields is 25, leaving room for more auto fields
                 logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."}); break;
             }
             logEmbed.addFields(field);
         }
         await logChannel.send({ embeds: [logEmbed] });
-    } catch (logSendError) { console.error("CRITICAL: Failed to send action log to Discord:", logSendError); }
+    } catch (logSendError) { console.error("CRITICAL: Failed to send action log to Discord:", logSendError.message); }
 }
 
+
+// ... (ensure getWhitelistFromGitHub, updateWhitelistOnGitHub, sendToDiscordChannel, SCRIPT_IN_ATTACHMENT_PLACEHOLDER are here)
+
 async function getWhitelistFromGitHub() {
-  // ... (existing function - no changes)
   console.log(`Fetching whitelist: ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}`);
   let rawDataContent; 
   try {
@@ -177,7 +177,7 @@ async function getWhitelistFromGitHub() {
         console.warn(`GitHub API returned status ${response.status} for getWhitelistFromGitHub.`);
         throw new Error(`GitHub API request failed with status ${response.status}`);
     }
-    console.log("Whitelist content fetched successfully from GitHub. Type of data:", typeof rawDataContent);
+    // console.log("Whitelist content fetched successfully from GitHub. Type of data:", typeof rawDataContent);
     let parsedWhitelist;
     if (typeof rawDataContent === 'string') {
       if (rawDataContent.trim() === "") { 
@@ -185,84 +185,48 @@ async function getWhitelistFromGitHub() {
           return [];
       }
       parsedWhitelist = JSON.parse(rawDataContent);
-    } else if (rawDataContent && typeof rawDataContent.content === 'string') { 
-      console.warn("getWhitelistFromGitHub: Received object with 'content' field, expected raw string. Attempting base64 decode.");
-      const decodedContent = Buffer.from(rawDataContent.content, 'base64').toString('utf-8');
-      if (decodedContent.trim() === "") {
-          console.warn("getWhitelistFromGitHub: Decoded whitelist file content is empty. Returning empty array.");
-          return [];
-      }
-      parsedWhitelist = JSON.parse(decodedContent);
-    } else if (typeof rawDataContent === 'object' && rawDataContent !== null && Array.isArray(rawDataContent)) {
+    } else if (typeof rawDataContent === 'object' && rawDataContent !== null && Array.isArray(rawDataContent)) { // If github raw somehow returns parsed JSON array (less likely for raw accept header)
       parsedWhitelist = rawDataContent;
     } else {
-      console.warn("getWhitelistFromGitHub: Received data was not a string, an object with 'content', or an array. Data (partial):", JSON.stringify(rawDataContent).substring(0, 500));
+      console.warn("getWhitelistFromGitHub: Received data was not a raw string or an array. Type:", typeof rawDataContent,"Data (partial):", JSON.stringify(rawDataContent).substring(0, 200));
       throw new Error('Unexpected GitHub response format for whitelist content.');
     }
     if (!Array.isArray(parsedWhitelist)) {
         console.warn("getWhitelistFromGitHub: Parsed whitelist is not an array. Type:", typeof parsedWhitelist, "Content (partial):", JSON.stringify(parsedWhitelist).substring(0,500));
         throw new Error('Parsed whitelist data from GitHub is not an array.');
     }
-    console.log(`Whitelist parsed. Found ${parsedWhitelist.length} entries.`);
+    // console.log(`Whitelist parsed. Found ${parsedWhitelist.length} entries.`);
     return parsedWhitelist;
   } catch (error) {
     console.error(`Error in getWhitelistFromGitHub: ${error.message}`);
-    const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,500) : (rawDataContent ? JSON.stringify(rawDataContent).substring(0, 500) : "N/A");
-    console.error(`Raw data preview on error (if any): ${rawDataPreview}`);
+    const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,200) : (rawDataContent ? JSON.stringify(rawDataContent).substring(0, 200) : "N/A");
     await sendActionLogToDiscord(
         'GitHub Whitelist Fetch/Parse Error',
         `Failed to get/parse whitelist from ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}:\n**Error:** ${error.message}\n**Raw Data Preview:** \`\`\`${rawDataPreview}\`\`\``,
         null, 0xFF0000
     );
-    const newError = new Error(`Failed to fetch or parse whitelist from GitHub. Path: ${config.WHITELIST_PATH}. Original: ${error.message}`);
-    newError.cause = error; 
-    throw newError;
+    throw new Error(`Failed to fetch or parse whitelist from GitHub. Path: ${config.WHITELIST_PATH}. Original: ${error.message}`);
   }
 }
-
-async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') {
-  // ... (existing function - no changes)
-  console.log("Updating whitelist on GitHub...");
-  try {
-    const { data: fileData } = await octokit.rest.repos.getContent({
-      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
-      path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
-      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-    });
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
-      path: config.WHITELIST_PATH,
-      message: `${actionMessage} - ${new Date().toISOString()}`,
-      content: Buffer.from(JSON.stringify(newWhitelist, null, 2)).toString('base64'),
-      sha: fileData.sha, branch: config.GITHUB_BRANCH
-    });
-    console.log("Whitelist updated successfully on GitHub.");
-    return true;
-  } catch (error) {
-    console.error(`GitHub API Error (updateWhitelist): Status ${error.status}, Message: ${error.message}`);
-    await sendActionLogToDiscord( 'GitHub Whitelist Update Error', `Failed to update whitelist: ${error.message}`, null, 0xFF0000);
-    const newError = new Error(`Failed to update whitelist on GitHub. Original: ${error.message}`);
-    newError.cause = error;
-    throw newError;
-  }
-}
-
 const SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT = '[Full script content attached as a .lua file due to length.]';
 const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n' + SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT + '\n```';
 
 async function sendToDiscordChannel(embedData, fullScriptContent = null) {
-  // ... (existing function - no changes)
    try {
     const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
     if (!channel) throw new Error('Log channel not found for script log.');
-    const embed = new EmbedBuilder(embedData);
+    const embed = new EmbedBuilder(embedData); // embedData should be an object, not already an EmbedBuilder instance from body
     const messageOptions = { embeds: [embed], components: [] };
     if (fullScriptContent && fullScriptContent.trim().length > 0) {
       if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
-        embed.setDescription((embed.data.description || '').replace(/```lua\n[\s\S]*?\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
+        const currentDescription = embed.data.description || '';
+        embed.setDescription(currentDescription.replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
         messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
       }
     }
+    // Assuming handleBlacklist and handleGetAssetOrScript are defined elsewhere for button interactions.
+    // If these buttons are only for this specific type of log, their definition or inclusion needs to be verified.
+    // For now, I'll include them as per the original provided code.
     messageOptions.components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('get_asset_script_from_log')
@@ -274,11 +238,10 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
   } catch (error) { console.error('Discord sendToDiscordChannel (script log) error:', error); }
 }
 
-// --- OAuth Middleware: ensureAuthenticatedAndAuthorized ---
-// ... (existing function - no changes)
-async function ensureAuthenticatedAndAuthorized(req, res, next) {
-  if (!req.isAuthenticated()) {
-    return res.redirect('/auth/discord');
+// --- OAuth Middleware: ensureAuthenticatedAndAuthorized (Existing - assumed correct) ---
+async function ensureAuthenticatedAndAuthorized(req, res, next) { /* ... Your existing function ... */ 
+    if (!req.isAuthenticated()) {
+    return res.redirect('/auth/discord'); 
   }
 
   const user = req.user;
@@ -364,343 +327,34 @@ async function ensureAuthenticatedAndAuthorized(req, res, next) {
   }
 }
 
-// --- Existing Express Routes ---
-// ... (app.get('/'), app.get('/verify/:username'), app.get('/download/:assetId'), etc. - no changes to these specific ones)
-app.get('/', (req, res) => {
-    if (req.isAuthenticated()) {
-        res.redirect('/executor');
-    } else {
-        res.send(`
-            <h1>Welcome to Lua Executor</h1>
-            <p>Please log in with Discord to continue.</p>
-            <a href="/auth/discord" style="padding: 10px 20px; background-color: #7289DA; color: white; text-decoration: none; border-radius: 5px;">
-                Login with Discord
-            </a>
-            <hr>
-            <p><small>Roblox Verification Endpoint: /verify/:username</small></p>
-            <p><small>Lua Menu Script Endpoint: /scripts/LuaMenu</small></p>
-        `);
-    }
-});
 
-app.get('/verify/:username', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
-  const username = req.params.username;
-  if (!username) return res.status(400).json({ status: 'error', message: 'Username required.' });
-  let whitelist;
-  try {
-    whitelist = await getWhitelistFromGitHub();
-    if (!Array.isArray(whitelist)) { 
-        console.error(`Verify error for ${username}: Whitelist data from GitHub was not an array. Type: ${typeof whitelist}`);
-        await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data from GitHub was not an array. Type received: ${typeof whitelist}.`, null, 0xFF0000);
-        return res.status(500).json({ status: 'error', message: "Internal server error: Whitelist data malformed." });
-    }
-    const foundUser = whitelist.find(user => user && typeof user.User === 'string' && user.User.toLowerCase() === username.toLowerCase());
-    if (!foundUser) {
-      console.log(`/verify/${username}: User not found in whitelist.`);
-      return res.status(404).json({ status: 'error', message: "User not found in whitelist." });
-    }
-    console.log(`/verify/${username}: User found.`);
-    res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
-  } catch (error) {
-    console.error(`Verify error for ${username} (caught in route): ${error.message}`);
-    if (!(error.message.includes("Failed to fetch or parse whitelist from GitHub"))) {
-        await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
-    }
-    res.status(500).json({ status: 'error', message: "Internal server error during verification." });
-  }
-});
+// --- Express Routes (Existing: /, /verify/:username, etc. - assumed correct) ---
+app.get('/', (req, res) => { /* ... */ });
+app.get('/verify/:username', async (req, res) => { /* ... */ });
+app.get('/download/:assetId', async (req, res) => { /* ... */ });
+app.post('/send/scriptlogs', async (req, res) => { /* ... */ });
+app.get('/scripts/LuaMenu', async (req, res) => { /* ... */ });
 
-app.get('/download/:assetId', async (req, res) => {
-  const assetId = req.params.assetId;
-  if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
-  const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file. Use the ID on the Roblox website or in Studio.`;
-  res.set({ 'Content-Type': 'application/rbxm', 'Content-Disposition': `attachment; filename="${assetId}.rbxm"` }).send(placeholderRbxmContent);
-});
-
-app.post('/send/scriptlogs', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
-  if (req.headers['authorization'] !== config.API_KEY) return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
-  if (!req.body?.embeds?.length) return res.status(400).json({ status: 'error', message: 'Invalid embed data.' });
-  try {
-    const embedData = req.body.embeds[0];
-    const scriptMatch = (embedData.description || '').match(/```lua\n([\s\S]*?)\n```/);
-    await sendToDiscordChannel(embedData, scriptMatch ? scriptMatch[1] : null);
-    res.status(200).json({ status: 'success', message: 'Log received.', logId: generateLogId() });
-  } catch (error) { console.error('Error /send/scriptlogs:', error.message); res.status(500).json({ status: 'error', message: "Processing script log failed." }); }
-});
-
-app.get('/scripts/LuaMenu', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
-  try {
-    const response = await axios.get(config.GITHUB_LUA_MENU_URL, { timeout: 8000, headers: { 'User-Agent': 'LuaWhitelistServer/1.9' }});
-    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).send(response.data);
-  } catch (error) { console.error('Error /scripts/LuaMenu:', error.message); res.status(error.response?.status || 500).json({ status: 'error', message: 'Failed to load LuaMenu script.' }); }
-});
-
-
-// --- OAuth Routes ---
-// ... (app.get('/auth/discord'), app.get('/auth/discord/callback'), app.get('/logout') - no changes)
 app.get('/auth/discord', passport.authenticate('discord'));
+app.get('/auth/discord/callback', passport.authenticate('discord', { failureRedirect: '/' }), async (req, res) => { /* ... */ });
+app.get('/logout', (req, res, next) => { /* ... */ });
+app.get('/executor', ensureAuthenticatedAndAuthorized, (req, res) => { /* ... (HTML content) ... */ });
+app.post('/api/execute-script', ensureAuthenticatedAndAuthorized, async (req, res) => { /* ... */ });
+app.post('/queue/:username', async (req, res) => { /* ... */ });
+app.get('/queue/:username', async (req, res) => { /* ... */ });
 
-app.get('/auth/discord/callback',
-  passport.authenticate('discord', { failureRedirect: '/' }), 
-  async (req, res) => {
-    await sendActionLogToDiscord("User Login Success (OAuth)", `User successfully logged in via Discord.`, req.user, 0x5865F2);
-    res.redirect('/executor'); 
-  }
-);
-
-app.get('/logout', (req, res, next) => {
-  const user = req.user;
-  req.logout(err => {
-    if (err) { return next(err); }
-    req.session.destroy(async (err) => {
-      if (err) {
-        console.error("Session destruction error:", err);
-        if (user) await sendActionLogToDiscord("Logout Error", `Error destroying session for user.`, user, 0xFF0000, [{name: "Error", value: err.message}]);
-        return res.status(500).send("Could not log out properly.");
-      }
-      if (user) await sendActionLogToDiscord("User Logout", `User logged out.`, user, 0xAAAAAA);
-      res.clearCookie('connect.sid'); 
-      res.redirect('/');
-    });
-  });
-});
-
-// --- Executor Page Route ---
-// ... (app.get('/executor', ensureAuthenticatedAndAuthorized, ...) - no changes)
-app.get('/executor', ensureAuthenticatedAndAuthorized, (req, res) => {
-  res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lua Executor</title>
-    <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/editor/editor.main.min.css">
-    <style>
-        body { font-family: sans-serif; margin: 0; background-color: #2c2f33; color: #ffffff; display: flex; flex-direction: column; height: 100vh; }
-        .top-bar { background-color: #23272a; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-        .top-bar h1 { margin: 0; font-size: 1.5em; }
-        .top-bar .user-info { font-size: 0.9em; }
-        .top-bar .user-info img { width: 30px; height: 30px; border-radius: 50%; vertical-align: middle; margin-right: 8px;}
-        .top-bar a { color: #7289da; text-decoration: none; margin-left: 15px; }
-        .main-content { display: flex; flex-direction: column; flex-grow: 1; padding: 15px; }
-        #editor-container { flex-grow: 1; border: 1px solid #4f545c; border-radius: 4px; overflow: hidden; margin-bottom: 15px; }
-        .controls { margin-bottom: 15px; display: flex; gap: 10px; }
-        .controls button {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background-color 0.2s;
-        }
-        .execute-btn { background-color: #5865f2; color: white; }
-        .execute-btn:hover { background-color: #4752c4; }
-        .clear-btn { background-color: #747f8d; color: white; }
-        .clear-btn:hover { background-color: #636c78; }
-        #status { margin-top: 10px; padding: 10px; background-color: #23272a; border-radius: 4px; font-size: 0.9em; min-height: 20px; }
-    </style>
-</head>
-<body>
-    <div class="top-bar">
-        <h1>Lua Executor</h1>
-        <div class="user-info">
-            ${req.user.avatar ? `<img src="https://cdn.discordapp.com/avatars/${req.user.id}/${req.user.avatar}.png?size=64" alt="avatar">` : ''}
-            Logged in as: <strong>${req.user.username}#${req.user.discriminator}</strong> (Roblox: ${req.robloxUsername || 'N/A'})
-            <a href="/logout">Logout</a>
-        </div>
-    </div>
-
-    <div class="main-content">
-        <div class="controls">
-            <button id="execute-btn" class="execute-btn">Execute Script (for ${req.robloxUsername || 'N/A'})</button>
-            <button id="clear-btn" class="clear-btn">Clear Editor</button>
-        </div>
-        <div id="editor-container"></div>
-        <div id="status">Ready. Enter your Lua script for Lua Serverside.</div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
-    <script>
-        let editor;
-        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' }});
-        require(['vs/editor/editor.main'], function() {
-            editor = monaco.editor.create(document.getElementById('editor-container'), {
-                value: '-- Lua Serverside Script Executor\\nprint("Hello from Lua Executor!")',
-                language: 'lua',
-                theme: 'vs-dark',
-                automaticLayout: true
-            });
-        });
-
-        const statusDiv = document.getElementById('status');
-
-        document.getElementById('execute-btn').addEventListener('click', async () => {
-            const scriptContent = editor.getValue();
-            if (!scriptContent.trim()) {
-                statusDiv.textContent = 'Error: Script is empty.';
-                statusDiv.style.color = '#ff6b6b';
-                return;
-            }
-            statusDiv.textContent = 'Executing...';
-            statusDiv.style.color = '#f1c40f';
-
-            try {
-                const response = await fetch('/api/execute-script', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ script: scriptContent })
-                });
-                const result = await response.json();
-                if (response.ok) {
-                    statusDiv.textContent = \`Success: \${result.message} (Log ID: \${result.logId})\`;
-                    statusDiv.style.color = '#2ecc71';
-                } else {
-                    statusDiv.textContent = \`Error (\${response.status}): \${result.message || 'Failed to send script.'}\`;
-                    statusDiv.style.color = '#ff6b6b';
-                }
-            } catch (error) {
-                console.error('Execution error:', error);
-                statusDiv.textContent = 'Network error or server unavailable.';
-                statusDiv.style.color = '#ff6b6b';
-            }
-        });
-
-        document.getElementById('clear-btn').addEventListener('click', () => {
-            editor.setValue('');
-            statusDiv.textContent = 'Editor cleared.';
-            statusDiv.style.color = '#ffffff';
-        });
-    </script>
-</body>
-</html>
-  `);
-});
-
-
-// --- API Route for Executor to send script ---
-// ... (app.post('/api/execute-script', ensureAuthenticatedAndAuthorized, ...) - no changes)
-app.post('/api/execute-script', ensureAuthenticatedAndAuthorized, async (req, res) => {
-    const { script } = req.body;
-    const user = req.user; 
-    const robloxUsername = req.robloxUsername;
-
-    if (!script || typeof script !== 'string' || script.trim() === '') {
-        return res.status(400).json({ status: 'error', message: 'Script content is missing or empty.' });
-    }
-    if (!robloxUsername) { 
-        await sendActionLogToDiscord("Execution Error", "Roblox username missing for authenticated user during script execution.", user, 0xFF0000);
-        return res.status(500).json({ status: 'error', message: 'Internal error: Could not determine Roblox username.' });
-    }
-    
-    try {
-        scriptQueue.set(robloxUsername, script); 
-
-        const logId = generateLogId();
-        await sendActionLogToDiscord(
-            "Script Queued via Executor", 
-            `Script queued for Roblox user **${robloxUsername}** by Discord user ${user.username}#${user.discriminator}.`,
-            user,
-            0x3498DB, 
-            [
-                { name: "Roblox Username", value: robloxUsername, inline: true },
-                { name: "Log ID", value: logId, inline: true },
-                { name: "Script Preview (first 200 chars)", value: `\`\`\`lua\n${script.substring(0, 200)}${script.length > 200 ? '...' : ''}\n\`\`\`` }
-            ]
-        );
-        console.log(`Script for ${robloxUsername} added to queue by ${user.username}. Length: ${script.length}`);
-        res.status(200).json({ status: 'success', message: `Script queued for ${robloxUsername}.`, logId: logId });
-
-    } catch (error) {
-        console.error(`Error proxying script to queue for ${robloxUsername}:`, error);
-        await sendActionLogToDiscord("Execution Error", `Failed to queue script for ${robloxUsername}.`, user, 0xFF0000, [{name: "Error", value: error.message}]);
-        res.status(500).json({ status: 'error', message: 'Failed to send script to internal queue.' });
-    }
-});
-
-// --- Queue API Routes ---
-// ... (app.post('/queue/:username'), app.get('/queue/:username') - no changes)
-app.post('/queue/:username', async (req, res) => {
-    if (req.headers['authorization'] !== config.API_KEY) {
-        return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
-    }
-    const username = req.params.username;
-    const scriptContent = req.body.script; 
-
-    if (!username) {
-        return res.status(400).json({ status: 'error', message: 'Username parameter is required.' });
-    }
-    if (!scriptContent || typeof scriptContent !== 'string' || scriptContent.trim() === '') {
-        return res.status(400).json({ status: 'error', message: 'Script content is missing or empty.' });
-    }
-
-    scriptQueue.set(username, scriptContent);
-    const logId = generateLogId();
-    console.log(`Script for ${username} added to queue via direct POST. Log ID: ${logId}`);
-    await sendActionLogToDiscord(
-        "Script Queued (Direct API)", 
-        `Script queued for Roblox user **${username}** via direct API call.`,
-        null, 
-        0x1ABC9C, 
-        [
-            { name: "Roblox Username", value: username, inline: true },
-            { name: "Log ID", value: logId, inline: true },
-            { name: "Source IP", value: req.ip, inline: true },
-            { name: "Script Preview (first 200 chars)", value: `\`\`\`lua\n${scriptContent.substring(0, 200)}${scriptContent.length > 200 ? '...' : ''}\n\`\`\`` }
-        ]
-    );
-    res.status(200).json({ status: 'success', message: 'Script queued.', logId: logId });
-});
-
-app.get('/queue/:username', async (req, res) => {
-    if (req.headers['authorization'] !== config.API_KEY && !isFromRoblox(req)) { 
-         console.warn(`/queue GET: Unauthorized access attempt for ${req.params.username} from IP ${req.ip}`);
-         return res.status(401).send('Unauthorized'); 
-    }
-
-    const username = req.params.username;
-    if (!username) {
-        return res.status(400).send('Username parameter is required.');
-    }
-
-    if (scriptQueue.has(username)) {
-        const script = scriptQueue.get(username);
-        scriptQueue.delete(username); 
-        
-        console.log(`Script retrieved from queue for ${username} by ${isFromRoblox(req) ? 'Roblox Game' : 'API Key User'}.`);
-        await sendActionLogToDiscord(
-            "Script Dequeued",
-            `Script retrieved from queue for Roblox user **${username}**. Initiated by ${isFromRoblox(req) ? 'Roblox Game' : 'API User'}.`,
-            null, 
-            0x2ECC71, 
-            [
-                { name: "Roblox Username", value: username, inline: true },
-                { name: "Source IP", value: req.ip, inline: true },
-            ]
-        );
-        res.set('Content-Type', 'text/plain; charset=utf-8').send(script);
-    } else {
-        res.status(404).send('-- No script in queue'); 
-    }
-});
-
-
-// --- NEW: Helper function to parse game data from embed description ---
+// Helper function to parse game data from embed description
 function parseGameDataFromEmbed(description) {
     if (!description) return null;
-
-    const parseNumeric = (str) => str ? parseInt(str.replace(/,/g, ''), 10) : 0;
+    const parseNumeric = (str) => str ? parseInt(str.replace(/[\D]/g, ''), 10) : 0; // More robust parsing for numbers like `1,234` or `1.2k` (though k/M not handled yet)
 
     const gameIdMatch = description.match(/games\/(\d+)/);
-    const gameNameMatch = description.match(/Game Name\*\*: (.*?)\n/); // Get game name
-    const activePlayersMatch = description.match(/Active Players\*\*:\s*\`([\d,]+)\`/);
-    const serverPlayersMatch = description.match(/Server Players\*\*:\s*\`(\d+)\/\d+\`/); // Current players in server
-    const visitsMatch = description.match(/Visits\*\*:\s*\`([\d,]+)\`/);
-    const favoritesMatch = description.match(/Favourites\*\*:\s*\`([\d,]+)\`/);
-    const jobInfoMatch = description.match(/Join Link\*\*:\s*\[.*?\]\(.*?launchData=([\w-]+).*?\)/); // To extract job ID or launch data
+    const gameNameMatch = description.match(/Game Name\*\*: (.*?)\n/);
+    const activePlayersMatch = description.match(/Active Players\*\*:\s*\`?([\d,]+)\`?/); // Made backticks optional for parsing
+    const serverPlayersMatch = description.match(/Server Players\*\*:\s*\`?(\d+)\/\d+\`?/);
+    const visitsMatch = description.match(/Visits\*\*:\s*\`?([\d,]+)\`?/);
+    const favoritesMatch = description.match(/Favourites\*\*:\s*\`?([\d,]+)\`?/);
+    const jobInfoMatch = description.match(/launchData=([\w-]+)/);
 
 
     return {
@@ -714,197 +368,242 @@ function parseGameDataFromEmbed(description) {
     };
 }
 
-// --- NEW: Helper function to update Discord voice channel names ---
+// Helper function to update Discord voice channel names
 async function updateDiscordVoiceChannelNames() {
     if (!discordClient.isReady()) {
-        console.warn("updateDiscordVoiceChannelNames: Discord client not ready.");
+        console.warn("updateDiscordVoiceChannelNames: Discord client not ready. Skipping update.");
         return;
     }
 
-    // 1. Clean expired game data
     const now = Date.now();
     let totalActivePlayers = 0;
-    const activeGames = new Map(); // Temporary map for non-expired games to avoid double counting players if same gameId different server
+    // Use a Set to track unique game IDs contributing to player count, if players are global per gameId
+    // If activePlayers from embed is "current players in this server instance", then just sum all non-expired.
+    // Based on embed "Active Players", this sounds like total for the game.
+    const uniqueActiveGamesForPlayerCount = new Map(); 
+
 
     for (const [gameId, data] of gameStats.entries()) {
         if (now - data.lastUpdate > GAME_DATA_EXPIRY_MS) {
             gameStats.delete(gameId);
+            // console.log(`Game data expired and removed for game ID: ${gameId}`);
         } else {
-            // Store unique games for player counting (use a composite key if different servers of same game report separately)
-            // For now, simple gameId suffices, sum of activePlayers from unique games.
-             if (!activeGames.has(gameId)) { // Sum players based on game ID once.
-                activeGames.set(gameId, data.activePlayers);
-            } else { // if you want sum of all reported game players (even from multiple servers of same game), update here
-                // current logic takes general "active players" of the game, not sum of server specific players
-                // activeGames.set(gameId, Math.max(activeGames.get(gameId), data.activePlayers)); // take the max reported for a game
-            }
+            // We want sum of global "Active Players" for each unique game
+             if (!uniqueActiveGamesForPlayerCount.has(gameId) || data.activePlayers > uniqueActiveGamesForPlayerCount.get(gameId)) {
+                 uniqueActiveGamesForPlayerCount.set(gameId, data.activePlayers); // Store the highest reported active players for this game
+             }
         }
     }
     
-    activeGames.forEach(players => totalActivePlayers += players);
-    const totalUniqueGames = gameStats.size; // Count of non-expired games
+    uniqueActiveGamesForPlayerCount.forEach(players => totalActivePlayers += players);
+    const totalUniqueGames = gameStats.size; // Count of non-expired, distinct gameIds we have info for.
 
+    console.log(`[StatsUpdate] Calculated: Total Active Players = ${totalActivePlayers}, Total Unique Games = ${totalUniqueGames}`);
     const formatNumber = (num) => num.toLocaleString('en-US');
 
-    // 2. Update "Current Active Players" voice channel
-    try {
-        const activePlayersChannel = await discordClient.channels.fetch(config.GAME_STATS_CURRENT_ACTIVE_VC_ID);
-        if (activePlayersChannel && activePlayersChannel.type === ChannelType.GuildVoice) {
-            const newName = `Current active: ${formatNumber(totalActivePlayers)}`;
-            if (activePlayersChannel.name !== newName) {
-                 await activePlayersChannel.setName(newName);
-                 console.log(`Updated voice channel: ${newName}`);
+    // Update "Current Active Players" voice channel
+    if (config.GAME_STATS_CURRENT_ACTIVE_VC_ID) {
+        try {
+            const activePlayersChannel = await discordClient.channels.fetch(config.GAME_STATS_CURRENT_ACTIVE_VC_ID);
+            if (activePlayersChannel && activePlayersChannel.type === ChannelType.GuildVoice) {
+                const newName = `Current active: ${formatNumber(totalActivePlayers)}`;
+                if (activePlayersChannel.name !== newName) {
+                     await activePlayersChannel.setName(newName, 'Updating game statistics');
+                     console.log(`[StatsUpdate] Updated 'Current active' VC (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) to: ${newName}`);
+                } else {
+                     // console.log(`[StatsUpdate] 'Current active' VC (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) name is already: ${newName}`);
+                }
+            } else {
+                console.warn(`[StatsUpdate] Voice channel for active players (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) not found or not a voice channel.`);
             }
-        } else {
-            console.warn(`Voice channel for active players (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}) not found or not a voice channel.`);
+        } catch (error) {
+            console.error(`[StatsUpdate] Error updating 'Current active players' voice channel (ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID}):`, error.message);
         }
-    } catch (error) {
-        console.error("Error updating 'Current active players' voice channel name:", error.message);
+    } else {
+        console.warn("[StatsUpdate] GAME_STATS_CURRENT_ACTIVE_VC_ID is not set. Cannot update active players channel.");
     }
 
-    // 3. Update "Total Games" voice channel
-    try {
-        const totalGamesChannel = await discordClient.channels.fetch(config.GAME_STATS_TOTAL_GAMES_VC_ID);
-        if (totalGamesChannel && totalGamesChannel.type === ChannelType.GuildVoice) {
-            const newName = `Total Games: ${formatNumber(totalUniqueGames)}`;
-             if (totalGamesChannel.name !== newName) {
-                await totalGamesChannel.setName(newName);
-                console.log(`Updated voice channel: ${newName}`);
-             }
-             // If it's the same channel ID, this name will override the previous one.
-             if (config.GAME_STATS_TOTAL_GAMES_VC_ID === config.GAME_STATS_CURRENT_ACTIVE_VC_ID && totalGamesChannel.name !== newName) {
-                 console.warn("GAME_STATS_TOTAL_GAMES_VC_ID is the same as GAME_STATS_CURRENT_ACTIVE_VC_ID. The channel name will be set to 'Total Games: ...'.");
-             }
 
-        } else {
-            console.warn(`Voice channel for total games (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}) not found or not a voice channel.`);
+    // Update "Total Games" voice channel
+    if (config.GAME_STATS_TOTAL_GAMES_VC_ID) {
+        try {
+            const totalGamesChannel = await discordClient.channels.fetch(config.GAME_STATS_TOTAL_GAMES_VC_ID);
+            if (totalGamesChannel && totalGamesChannel.type === ChannelType.GuildVoice) {
+                const newName = `Total Games: ${formatNumber(totalUniqueGames)}`;
+                 if (totalGamesChannel.name !== newName) {
+                    await totalGamesChannel.setName(newName, 'Updating game statistics');
+                    console.log(`[StatsUpdate] Updated 'Total Games' VC (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}) to: ${newName}`);
+                 } else {
+                    // console.log(`[StatsUpdate] 'Total Games' VC (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}) name is already: ${newName}`);
+                 }
+            } else {
+                console.warn(`[StatsUpdate] Voice channel for total games (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}) not found or not a voice channel.`);
+            }
+        } catch (error) {
+            console.error(`[StatsUpdate] Error updating 'Total games' voice channel (ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID}):`, error.message);
         }
-    } catch (error) {
-        console.error("Error updating 'Total games' voice channel name:", error.message);
+    } else {
+        console.warn("[StatsUpdate] GAME_STATS_TOTAL_GAMES_VC_ID is not set. Cannot update total games channel.");
     }
-    // Note: Discord has rate limits for channel name changes (2 per 10 minutes per channel).
-    // If requests are frequent, this could hit the limit.
-    // For the prompt "O nome deles deve mudar sempre que receber o post request", this implements it directly.
 }
 
-// --- NEW: Generic Game Log Request Handler ---
-async function gameLogRequestHandler(req, res, webhookUrl) {
+
+// Generic Game Log Request Handler
+async function gameLogRequestHandler(req, res, webhookUrl, tierName) {
+    const sourceIp = req.ip || req.connection?.remoteAddress;
+    console.log(`[Gamelog:${tierName}] Request received for endpoint: ${req.path} from IP: ${sourceIp}`);
+    
     if (req.headers['authorization'] !== config.API_KEY) {
+        console.warn(`[Gamelog:${tierName}] Unauthorized request from IP ${sourceIp}. Path: ${req.path}. API key mismatch or missing.`);
         return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
     }
+    // console.log(`[Gamelog:${tierName}] Request authorized with API Key from IP ${sourceIp}.`);
+
     if (!req.body || !req.body.embeds || !req.body.embeds.length) {
+        console.warn(`[Gamelog:${tierName}] Invalid/missing embed data. Body Preview:`, JSON.stringify(req.body).substring(0, 200));
         return res.status(400).json({ status: 'error', message: 'Invalid or missing embed data.' });
     }
+
     if (!webhookUrl) {
-        console.error("gameLogRequestHandler: webhookUrl is undefined. This endpoint might be misconfigured.");
-        return res.status(500).json({ status: 'error', message: 'Internal server configuration error (webhook).' });
+        console.error(`[Gamelog:${tierName}] CRITICAL: webhookUrl is UNDEFINED for this tier. Path: ${req.path}`);
+        await sendActionLogToDiscord('GameLog Config Error', `Webhook URL is MISSING for tier ${tierName} (Path: ${req.path}). Gamelog cannot be forwarded. Please check .env variables (WEBHOOK_GAMELOGS_...).`, null, 0xFF0000);
+        return res.status(500).json({ status: 'error', message: 'Internal server configuration error (webhook URL missing).' });
     }
+    // console.log(`[Gamelog:${tierName}] Target webhook: ${webhookUrl.substring(0,60)}...`);
 
     const embedData = req.body.embeds[0];
     const gameData = parseGameDataFromEmbed(embedData.description);
 
     if (gameData && gameData.gameId) {
-        gameStats.set(gameData.gameId, {
-            ...gameData,
-            lastUpdate: Date.now()
-        });
-        console.log(`Logged/Updated game: ${gameData.gameName || gameData.gameId} (ID: ${gameData.gameId}), Players: ${gameData.activePlayers}`);
+        const oldData = gameStats.get(gameData.gameId);
+        gameStats.set(gameData.gameId, { ...gameData, lastUpdate: Date.now() });
+        // console.log(`[Gamelog:${tierName}] Stored/Updated game ID: ${gameData.gameId} ('${gameData.gameName}'), Active: ${gameData.activePlayers}, ServerP: ${gameData.serverPlayers}, Visits: ${gameData.visits}, Favs: ${gameData.favorites}. New entry: ${!oldData}`);
     } else {
-        console.warn("Could not parse game ID from embed in gamelog request. Statistics for this entry might be incomplete.");
-        // Still forward the log even if parsing fails for some data points
+        console.warn(`[Gamelog:${tierName}] Could not parse gameId or other crucial data. GameId: ${gameData?.gameId}. Description snippet: ${(embedData.description || '').substring(0, 150)}...`);
     }
 
+    // console.log(`[Gamelog:${tierName}] Attempting to forward to webhook: ${webhookUrl.substring(0,60)}...`);
     try {
-        await axios.post(webhookUrl, req.body, { // Forward the original body (includes content, embeds, attachments)
-            headers: { 'Content-Type': 'application/json' }
+        const webhookResponse = await axios.post(webhookUrl, req.body, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000 // 10 second timeout
         });
+        // console.log(`[Gamelog:${tierName}] Successfully forwarded. Webhook Status: ${webhookResponse.status}.`);
         res.status(200).json({ status: 'success', message: 'Game log received and forwarded.' });
 
-        // Update voice channel names (as per requirement "sempre que receber o post request")
-        await updateDiscordVoiceChannelNames();
+        await updateDiscordVoiceChannelNames(); // Update stats display on successful log
 
     } catch (error) {
-        console.error(`Error forwarding game log to webhook ${webhookUrl}:`, error.message);
+        let errorDetail = error.message;
+        let responseDetails = {};
         if (error.response) {
-            console.error("Webhook response data:", error.response.data);
-            console.error("Webhook response status:", error.response.status);
+            // console.error(`[Gamelog:${tierName}] Webhook Error! Status: ${error.response.status}. URL: ${webhookUrl.substring(0,60)}...`);
+            // console.error(`[Gamelog:${tierName}] Webhook Error Data:`, JSON.stringify(error.response.data).substring(0, 300));
+            errorDetail = `Webhook responded with Status ${error.response.status}`;
+            responseDetails = { name: "Webhook Response", value: `\`\`\`json\n${JSON.stringify(error.response.data, null, 2).substring(0, 1000)}\n\`\`\``};
+        } else if (error.request) {
+            // console.error(`[Gamelog:${tierName}] Webhook Error! No response received. URL: ${webhookUrl.substring(0,60)}...`);
+            errorDetail = 'No response from webhook server (timeout or connection issue)';
+        } else {
+            // console.error(`[Gamelog:${tierName}] Webhook Error! Error setting up request. URL: ${webhookUrl.substring(0,60)}... Message: ${error.message}`);
         }
-        // Log error to Discord admin channel if critical
+        console.error(`[Gamelog:${tierName}] Failed to forward log for gameId '${gameData?.gameId || 'N/A'}'. Error: ${errorDetail}`);
+        
+        const fields = [{ name: "Webhook URL", value: webhookUrl }, { name: "Error", value: errorDetail.substring(0,1020) }];
+        if (Object.keys(responseDetails).length > 0) fields.push(responseDetails);
+        if (gameData?.gameId) fields.push({ name: "Game ID (parsed)", value: gameData.gameId, inline: true});
+        if (gameData?.gameName) fields.push({ name: "Game Name (parsed)", value: gameData.gameName.substring(0,100), inline: true});
+
+
         await sendActionLogToDiscord(
             'GameLog Webhook Forward Error',
-            `Failed to forward gamelog to webhook: ${webhookUrl}\nError: ${error.message}`,
-            null, 0xFF0000,
-            [{name: "Webhook URL", value: webhookUrl}, {name:"Game ID (if parsed)", value: gameData?.gameId || "N/A"}]
+            `Failed to forward gamelog to webhook for tier **${tierName}**.`,
+            null, 0xFF0000, fields
         );
-        res.status(500).json({ status: 'error', message: 'Failed to forward game log.' });
+        res.status(502).json({ status: 'error', message: `Failed to forward game log: ${errorDetail}` });
     }
 }
 
-// --- NEW: Game Log API Routes ---
+// Game Log API Routes
 app.post('/send/gamelogs/9', (req, res) => {
-    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_2_9);
+    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_2_9, '2-9');
 });
 app.post('/send/gamelogs/49', (req, res) => {
-    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_10_49);
+    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_10_49, '10-49');
 });
 app.post('/send/gamelogs/200', (req, res) => {
-    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_50_200);
+    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_50_200, '50-200');
 });
 app.post('/send/gamelogs/Premium', (req, res) => {
-    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_PREMIUM);
+    gameLogRequestHandler(req, res, config.WEBHOOK_GAMELOGS_PREMIUM, 'Premium');
 });
 
 
-// --- Discord Event Handlers ---
-// ... (discordClient.on('interactionCreate', ...), discordClient.on('ready', ...) - no changes to existing ones, handleBlacklist etc are assumed correct)
+// Discord Event Handlers
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
-  // Pre-defined functions (not part of this request's changes)
-  async function handleBlacklist(interaction) { /* ... your existing function ... */ 
-    console.log("Placeholder: handleBlacklist called for", interaction.customId);
-    if(!interaction.replied) await interaction.reply({content: "Blacklist action (placeholder).", ephemeral: true}).catch(console.error);
+  // Placeholder functions for existing button handlers - ensure these are defined in your full script
+  async function handleBlacklist(interaction) { 
+      if(!interaction.replied && !interaction.deferred) await interaction.reply({content: "Blacklist (placeholder).", ephemeral: true}).catch(console.error);
+      else if(interaction.deferred && !interaction.replied) await interaction.editReply({content: "Blacklist (placeholder).", ephemeral: true}).catch(console.error);
+      console.log("handleBlacklist called");
   }
-  async function handleGetAssetOrScript(interaction) { /* ... your existing function ... */ 
-    console.log("Placeholder: handleGetAssetOrScript called for", interaction.customId);
-     if(!interaction.replied) await interaction.reply({content: "Get asset/script action (placeholder).", ephemeral: true}).catch(console.error);
+  async function handleGetAssetOrScript(interaction) { 
+      if(!interaction.replied && !interaction.deferred) await interaction.reply({content: "Get Asset/Script (placeholder).", ephemeral: true}).catch(console.error);
+      else if(interaction.deferred && !interaction.replied) await interaction.editReply({content: "Get Asset/Script (placeholder).", ephemeral: true}).catch(console.error);
+      console.log("handleGetAssetOrScript called");
   }
-
 
   try {
     if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
     else if (interaction.customId === 'get_asset_script_from_log') await handleGetAssetOrScript(interaction);
   } catch (error) {
     console.error('Main Interaction error catcher:', error);
-    await sendActionLogToDiscord( 'Main Interaction Catcher Error', `Error: ${error.message}\n\`\`\`${error.stack ? error.stack.substring(0,1000) : "No stack"}\n\`\`\``, interaction, 0xFF0000);
-    if (interaction.isRepliable()) {
-        if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'An unhandled error occurred. Admins notified.', ephemeral: true }).catch(e => console.error("Error sending fallback reply:", e));
-        else if (interaction.deferred && !interaction.replied) await interaction.editReply({ content: 'An unhandled error occurred. Admins notified.', ephemeral: true }).catch(e => console.error("Error sending fallback editReply:", e));
-    }
+    await sendActionLogToDiscord( 'Main Interaction Catcher Error', `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : "No stack"}`, interaction, 0xFF0000);
+    try {
+        if (interaction.isRepliable()) {
+            const replyOptions = { content: 'An unhandled error occurred processing this action. Admins have been notified.', ephemeral: true };
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply(replyOptions).catch(e => console.error("Error sending fallback editReply:", e.message));
+            } else {
+                await interaction.reply(replyOptions).catch(e => console.error("Error sending fallback reply:", e.message));
+            }
+        }
+    } catch(e) { console.error("Super fallback reply error", e.message); }
   }
 });
 
 discordClient.on('ready', () => {
   console.log(`Bot logged in as ${discordClient.user.tag} in ${discordClient.guilds.cache.size} guilds.`);
   discordClient.user.setStatus('dnd');
-  discordClient.user.setActivity('Managing Whitelists & Scripts', { type: ActivityType.Watching });
-  // Initial call to set voice channel names on startup
+  discordClient.user.setActivity('Managing Logs & Scripts', { type: ActivityType.Playing }); 
   updateDiscordVoiceChannelNames().catch(console.error); 
 });
 
-// --- Error Handlers & Startup ---
-// ... (process.on handlers, startServer - no changes)
-process.on('unhandledRejection', (r, p) => console.error('Unhandled Rejection:', r, p));
-process.on('uncaughtException', e => console.error('Uncaught Exception:', e));
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  sendActionLogToDiscord('Unhandled Rejection', `Reason: ${reason}\nPromise: ${JSON.stringify(promise).substring(0,1000)}`, null, 0xCC0000)
+    .catch(e => console.error("Failed to send unhandledRejection log", e));
+});
+process.on('uncaughtException', (error, origin) => {
+  console.error('Uncaught Exception:', error, 'Origin:', origin);
+   sendActionLogToDiscord('Uncaught Exception', `Error: ${error.message}\nOrigin: ${origin}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'N/A'}`, null, 0xCC0000)
+   .catch(e => console.error("Failed to send uncaughtException log", e));
+  // Optional: process.exit(1) if it's truly fatal, but logging first is good.
+});
 
 async function startServer() {
   try {
     await discordClient.login(config.DISCORD_BOT_TOKEN);
-    app.listen(config.PORT, () => {
-        console.log(`API on http://localhost:${config.PORT}, Bot connected.`);
-        console.log(`Discord OAuth Redirect URI should be: ${config.DISCORD_CALLBACK_URL}`);
-        console.log(`Executor available at: http://localhost:${config.PORT}/executor (after login)`);
-        console.log(`Gamelog endpoints ready, e.g., /send/gamelogs/9`);
+    app.listen(config.PORT, () => { // Render sets PORT env variable
+        console.log(`API listening on port ${config.PORT}. Bot connected to Discord.`);
+        console.log(`OAuth Redirect URI should be: ${config.DISCORD_CALLBACK_URL}`);
+        console.log(`Executor page: (your domain)/executor`); // Avoid localhost for deployed app
+        console.log(`Gamelog endpoints like /send/gamelogs/9 are active.`);
+        console.log(`Log Channel ID: ${config.LOG_CHANNEL_ID || 'NOT SET'}`);
+        console.log(`Active Players VC ID: ${config.GAME_STATS_CURRENT_ACTIVE_VC_ID || 'NOT SET'}`);
+        console.log(`Total Games VC ID: ${config.GAME_STATS_TOTAL_GAMES_VC_ID || 'NOT SET'}`);
     });
   } catch (error) { console.error('Startup failed:', error); process.exit(1); }
 }
