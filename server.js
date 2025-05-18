@@ -30,9 +30,9 @@ const config = {
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
   ROLES: { // Replace with your actual role IDs or set via ENV VARS like ROLE_STANDARD_ID etc.
-    STANDARD: process.env.ROLE_STANDARD_ID || 'YOUR_STANDARD_ROLE_ID',
-    PREMIUM: process.env.ROLE_PREMIUM_ID || 'YOUR_PREMIUM_ROLE_ID',
-    ULTIMATE: process.env.ROLE_ULTIMATE_ID || 'YOUR_ULTIMATE_ROLE_ID'
+    STANDARD: process.env.ROLE_STANDARD_ID || '1330552089759191064',
+    PREMIUM: process.env.ROLE_PREMIUM_ID || '1333286640248029264',
+    ULTIMATE: process.env.ROLE_ULTIMATE_ID || '1337177751202828300'
   },
   PORT: process.env.PORT || 3000,
   SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 1000,
