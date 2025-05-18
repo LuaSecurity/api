@@ -11,37 +11,63 @@ const DiscordStrategy = require('passport-discord').Strategy;
 
 // Config from environment variables
 const config = {
+  // Your existing ENV VARS
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-  LOG_CHANNEL_ID: '1331021897735081984', // Replace with your actual channel ID
+
+  // Mapped ENV VARS
+  DISCORD_CLIENT_ID: process.env.BOT_CLIENT_ID,
+  DISCORD_CLIENT_SECRET: process.env.BOT_CLIENT_SECRET,
+  DISCORD_CALLBACK_URL: process.env.REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/auth/discord/callback`,
+  TARGET_GUILD_ID: process.env.SERVER_ID,
+
+  // Other configurations - SET THESE IN .env OR DIRECTLY IF NEEDED
+  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID', // Replace or set via ENV
   GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
-  ROLES: {
-    STANDARD: '1330552089759191064', // Replace with your actual role ID
-    PREMIUM: '1333286640248029264',  // Replace with your actual role ID
-    ULTIMATE: '1337177751202828300' // Replace with your actual role ID
+  ROLES: { // Replace with your actual role IDs or set via ENV VARS like ROLE_STANDARD_ID etc.
+    STANDARD: process.env.ROLE_STANDARD_ID || 'YOUR_STANDARD_ROLE_ID',
+    PREMIUM: process.env.ROLE_PREMIUM_ID || 'YOUR_PREMIUM_ROLE_ID',
+    ULTIMATE: process.env.ROLE_ULTIMATE_ID || 'YOUR_ULTIMATE_ROLE_ID'
   },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 1000, // Increased for better inline viewing
-
-  // New OAuth and Executor Config
-  DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID,
-  DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET,
-  DISCORD_CALLBACK_URL: process.env.DISCORD_CALLBACK_URL || `http://localhost:${process.env.PORT || 3000}/auth/discord/callback`,
-  TARGET_GUILD_ID: process.env.TARGET_GUILD_ID, // The Discord server ID users must be in
+  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 1000,
   SESSION_SECRET: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-  ADD_USER_TO_GUILD_IF_MISSING: process.env.ADD_USER_TO_GUILD_IF_MISSING === 'true', // Set to true to attempt to add user
+  ADD_USER_TO_GUILD_IF_MISSING: process.env.ADD_USER_TO_GUILD_IF_MISSING === 'true',
 };
 
-if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !config.GITHUB_LUA_MENU_URL ||
-    !config.DISCORD_CLIENT_ID || !config.DISCORD_CLIENT_SECRET || !config.TARGET_GUILD_ID) {
-  console.error('FATAL ERROR: Missing essential environment variables (check API keys, Discord OAuth, GitHub, Guild ID).');
+// Critical check for essential environment variables based on your provided names
+if (!config.API_KEY || 
+    !config.GITHUB_TOKEN || 
+    !config.DISCORD_BOT_TOKEN || 
+    !config.GITHUB_LUA_MENU_URL ||
+    !config.DISCORD_CLIENT_ID ||  // Was BOT_CLIENT_ID
+    !config.DISCORD_CLIENT_SECRET || // Was BOT_CLIENT_SECRET
+    !config.TARGET_GUILD_ID) { // Was SERVER_ID
+  console.error('FATAL ERROR: Missing essential environment variables. Please check your .env file for API_KEY, GITHUB_TOKEN, DISCORD_BOT_TOKEN, GITHUB_LUA_MENU_URL, BOT_CLIENT_ID, BOT_CLIENT_SECRET, SERVER_ID.');
+  // Also ensure REDIRECT_URI is set if not using localhost default.
+  if (!config.DISCORD_CALLBACK_URL.startsWith('http://localhost') && !process.env.REDIRECT_URI) {
+    console.error('Warning: REDIRECT_URI is not set, and default callback is localhost. This might be an issue if deploying.');
+  }
   process.exit(1);
 }
+
+// BOT_PUBLIC_KEY is not directly used by this script's current features,
+// but if you add interaction signature verification manually, you would use it.
+// Discord.js handles this for bot commands typically. For raw HTTP interactions, it's needed.
+
+const app = express();
+const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
+const discordClient = new Client({
+  intents: [
+    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
+  ]
+});
 
 const app = express();
 const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
