@@ -34,7 +34,7 @@ const MALICIOUS_KEYWORDS_NAMES = [
     'loadstring', 'fione', 'yueliang', 'executor', 'execute'
 ];
 const MALICIOUS_KEYWORDS_SCRIPTS = [
-    'getfenv', 'setfenv', 'debug', 'moonsec v3'
+    'getfenv', 'setfenv', 'debug', 'moonsec v3',
     'http://', 'https://', 'require', 'pcall', 'xpcall',
     'webhook', 'discord.com/api/webhooks', 'pastebin.com', 'controlc.com'
 ];
