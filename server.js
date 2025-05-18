@@ -24,7 +24,7 @@ const config = {
   TARGET_GUILD_ID: process.env.SERVER_ID,
 
   // Other configurations - SET THESE IN .env OR DIRECTLY IF NEEDED
-  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID', // Replace or set via ENV
+  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID || '1331021897735081984', // Replace or set via ENV
   GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
