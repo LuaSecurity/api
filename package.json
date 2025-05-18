@@ -21,7 +21,6 @@
     "passport": "^0.7.0",
     "passport-discord": "^0.1.4",
     "buffer": "^6.0.3",
-    "rbx-roblox-asset-parser": "^1.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
