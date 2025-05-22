@@ -33,6 +33,7 @@ if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !con
 
 // --- BEGIN ADDED Game Counter Constants ---
 const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204';
+const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936'; // New: For Total Players channel
 const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000; // 1 minute for periodic updates
 const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521'];
@@ -50,7 +51,7 @@ const discordClient = new Client({
 app.use(bodyParser.json({ limit: '500mb' }));
 
 // --- BEGIN ADDED Game Counter Data Structure ---
-let trackedGameIds = new Map(); // Stores <gameId: string, expiryTimestamp: number>
+let trackedGameIds = new Map(); // Stores <gameId: string, { expiryTimestamp: number, players: number }>
 // --- END ADDED Game Counter Data Structure ---
 
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
@@ -362,51 +363,53 @@ async function handleGetAssetOrScript(interaction) {
   }
 }
 
-// --- BEGIN ADDED Game Counter Function ---
-async function updateGameCounterChannel() {
+
+// --- BEGIN MODIFIED Game Counter Function (was updateGameCounterChannel, now handles both) ---
+async function updateCounterChannels() {
     if (!discordClient || !discordClient.isReady()) {
-        // console.debug("updateGameCounterChannel: Bot not ready, skipping update.");
+        // console.debug("updateCounterChannels: Bot not ready, skipping update.");
         return;
     }
-    // console.debug("updateGameCounterChannel: Running update check.");
+    // console.debug("updateCounterChannels: Running update cycle.");
     const now = Date.now();
     let activeGameCount = 0;
+    let totalPlayerCount = 0; // For the new player counter
     const idsToRemove = [];
 
-    for (const [gameId, expiryTimestamp] of trackedGameIds.entries()) {
-        if (expiryTimestamp < now) {
+    // Iterate over tracked games to update counts and find expired ones
+    for (const [gameId, data] of trackedGameIds.entries()) {
+        if (data.expiryTimestamp < now) {
             idsToRemove.push(gameId);
         } else {
             activeGameCount++;
+            totalPlayerCount += (data.players || 0); // Sum players for active games, default to 0 if players undefined
         }
     }
 
-    let countChangedByExpiration = false;
+    // Remove expired games
     if (idsToRemove.length > 0) {
-        countChangedByExpiration = true;
         for (const id of idsToRemove) {
             trackedGameIds.delete(id);
-            // console.debug(`Game ID ${id} expired and removed.`);
+            // console.debug(`Game ID ${id} expired and removed from tracking.`);
         }
     }
     
-    // console.debug(`Active game count after expiration check: ${activeGameCount}`);
+    // console.debug(`Calculated counts - Active Games: ${activeGameCount}, Total Players: ${totalPlayerCount}`);
 
+    // Update "Total Games" Voice Channel Name
     try {
-        const channel = await discordClient.channels.fetch(GAME_COUNTER_VOICE_CHANNEL_ID);
-        if (channel && channel.type === ChannelType.GuildVoice) {
-            const newName = `Total Games: ${activeGameCount}`;
-            if (channel.name !== newName) {
-                await channel.setName(newName);
-                console.log(`Updated game counter voice channel name to: ${newName}`);
-            } else {
-                // console.debug(`Game counter voice channel name already up-to-date: ${newName}`);
+        const gameChannel = await discordClient.channels.fetch(GAME_COUNTER_VOICE_CHANNEL_ID);
+        if (gameChannel && gameChannel.type === ChannelType.GuildVoice) {
+            const newGameChannelName = `Total Games: ${activeGameCount}`;
+            if (gameChannel.name !== newGameChannelName) {
+                await gameChannel.setName(newGameChannelName);
+                console.log(`Updated game counter voice channel name to: ${newGameChannelName}`);
             }
-        } else if (channel) {
-            console.warn(`Channel ${GAME_COUNTER_VOICE_CHANNEL_ID} found, but it is not a voice channel. Type: ${channel.type}`);
+        } else if (gameChannel) {
+            console.warn(`Target channel ${GAME_COUNTER_VOICE_CHANNEL_ID} for games found, but it is not a GuildVoice channel. Type: ${gameChannel.type}`); // Corrected: gameChannel.type
         } else {
-            // This case might be hit if fetch returns null, though it usually throws for unknown channel.
-             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} not found.`);
+             // This means fetch returned null, less common than throwing an error for unknown channel
+             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null).`);
         }
     } catch (error) {
         if (error.code === 10003) { // Unknown Channel
@@ -417,8 +420,32 @@ async function updateGameCounterChannel() {
              console.error(`Error updating game counter voice channel name for ${GAME_COUNTER_VOICE_CHANNEL_ID}:`, error);
         }
     }
+
+    // Update "Total Players" Voice Channel Name
+    try {
+        const playerChannel = await discordClient.channels.fetch(PLAYER_COUNTER_VOICE_CHANNEL_ID);
+        if (playerChannel && playerChannel.type === ChannelType.GuildVoice) {
+            const newPlayerChannelName = `Total Players: ${totalPlayerCount}`;
+            if (playerChannel.name !== newPlayerChannelName) {
+                await playerChannel.setName(newPlayerChannelName);
+                console.log(`Updated player counter voice channel name to: ${newPlayerChannelName}`);
+            }
+        } else if (playerChannel) {
+            console.warn(`Target channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} for players found, but it is not a GuildVoice channel. Type: ${playerChannel.type}`);
+        } else {
+            console.warn(`Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null).`);
+        }
+    } catch (error) {
+        if (error.code === 10003) { // Unknown Channel
+            console.warn(`Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched.`);
+        } else if (error.name === 'DiscordAPIError' && error.status === 403) { // Missing permissions
+            console.error(`Missing permissions to update player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
+        } else {
+            console.error(`Error updating player counter voice channel name for ${PLAYER_COUNTER_VOICE_CHANNEL_ID}:`, error);
+        }
+    }
 }
-// --- END ADDED Game Counter Function ---
+// --- END MODIFIED Game Counter Function ---
 
 
 // --- Express Routes ---
@@ -495,59 +522,65 @@ discordClient.on('interactionCreate', async interaction => {
   }
 });
 
-// New event listener for messageCreate to track game IDs from embeds
+// New event listener for messageCreate to track game IDs and player counts from embeds
 discordClient.on('messageCreate', async message => {
     if (!TARGET_EMBED_CHANNEL_IDS.includes(message.channel.id)) return;
-    // Optional: if you want to ignore messages from bots (including potentially itself if it ever sends embeds to these channels)
+    // Optional: if you want to ignore messages from bots 
     // if (message.author.bot) return; 
     if (!message.embeds || message.embeds.length === 0) return;
 
-    let newGamesFoundThisMessage = false;
+    let dataChangedThisMessage = false; 
     const now = Date.now();
-    const gameIdRegex = /Roblox\.GameLauncher\.joinGameInstance\(\s*(\d+)\s*,\s*"[^"]+"\s*\)/g;
+    const gameIdRegex = /Roblox\.GameLauncher\.joinGameInstance\(\s*(\d+)\s*,\s*"[^"]+"\s*\)/; 
+    const activePlayersRegex = /Active Players:\s*(\d+)/i;
 
     for (const embed of message.embeds) {
         if (!embed.description) continue;
 
-        let match;
-        // Important: Reset lastIndex for global regex when using in a loop or on new strings
-        gameIdRegex.lastIndex = 0; 
-        while ((match = gameIdRegex.exec(embed.description)) !== null) {
-            const gameId = match[1];
-            if (gameId) {
-                const currentExpiry = trackedGameIds.get(gameId);
-                // A game is "newly found" for update purposes if it wasn't tracked or was expired
-                if (!currentExpiry || currentExpiry < now) {
-                    newGamesFoundThisMessage = true;
-                }
-                trackedGameIds.set(gameId, now + GAME_ID_TRACKING_DURATION_MS);
-                // console.debug(`Tracked/updated game ID: ${gameId}, new expiry: ${new Date(now + GAME_ID_TRACKING_DURATION_MS).toLocaleTimeString()}`);
+        const gameIdMatch = embed.description.match(gameIdRegex);
+        const playersMatch = embed.description.match(activePlayersRegex);
+
+        if (gameIdMatch && gameIdMatch[1]) { 
+            const gameId = gameIdMatch[1];
+            const activePlayers = playersMatch && playersMatch[1] ? parseInt(playersMatch[1], 10) : 0;
+
+            const currentGameData = trackedGameIds.get(gameId);
+            const newExpiry = now + GAME_ID_TRACKING_DURATION_MS;
+
+            if (!currentGameData || 
+                currentGameData.expiryTimestamp < now || 
+                (currentGameData.expiryTimestamp >= now && currentGameData.players !== activePlayers) 
+            ) {
+                dataChangedThisMessage = true;
             }
+            
+            trackedGameIds.set(gameId, { expiryTimestamp: newExpiry, players: activePlayers });
+            // console.debug(`Tracked/updated game ID: ${gameId}, players: ${activePlayers}, new expiry: ${new Date(newExpiry).toLocaleTimeString()}`);
         }
     }
 
-    if (newGamesFoundThisMessage) {
-        // console.debug("New game IDs found in message, triggering immediate update of voice channel name.");
-        await updateGameCounterChannel();
+    if (dataChangedThisMessage) {
+        // console.debug("Game data (ID or player count) changed, triggering immediate update of counter channels.");
+        await updateCounterChannels(); 
     }
 });
 
 
-discordClient.on('ready', async () => { // Made this async
+discordClient.on('ready', async () => { 
   console.log(`Bot logged in as ${discordClient.user.tag} in ${discordClient.guilds.cache.size} guilds.`);
   discordClient.user.setStatus('dnd');
   discordClient.user.setActivity('Managing Whitelists', { type: ActivityType.Watching });
 
-  // --- BEGIN ADDED Game Counter Initialization ---
-  console.log('Bot ready, performing initial game counter update.');
+  // --- BEGIN MODIFIED Game Counter Initialization ---
+  console.log('Bot ready, performing initial counter updates for games and players.');
   try {
-      await updateGameCounterChannel(); // Perform an initial update
-      setInterval(updateGameCounterChannel, GAME_COUNTER_UPDATE_INTERVAL_MS); // Set up periodic updates
-      console.log(`Game counter initialized. Monitoring channels: ${TARGET_EMBED_CHANNEL_IDS.join(', ')}. Updating voice channel: ${GAME_COUNTER_VOICE_CHANNEL_ID}.`);
+      await updateCounterChannels(); 
+      setInterval(updateCounterChannels, GAME_COUNTER_UPDATE_INTERVAL_MS); 
+      console.log(`Game and Player counters initialized. Monitoring target embed channels: ${TARGET_EMBED_CHANNEL_IDS.join(', ')}. Updating 'Total Games' voice channel: ${GAME_COUNTER_VOICE_CHANNEL_ID}, 'Total Players' voice channel: ${PLAYER_COUNTER_VOICE_CHANNEL_ID}.`);
   } catch (initError) {
-      console.error("Error during game counter initialization in ready event:", initError);
+      console.error("Error during counter initialization in 'ready' event:", initError);
   }
-  // --- END ADDED Game Counter Initialization ---
+  // --- END MODIFIED Game Counter Initialization ---
 });
 // --- END MODIFIED/NEW Discord Event Handlers ---
 
