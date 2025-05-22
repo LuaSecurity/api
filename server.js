@@ -4,7 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js'); // Added ChannelType
 
 // Config from environment variables
 const config = {
@@ -31,6 +31,13 @@ if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !con
   process.exit(1);
 }
 
+// --- BEGIN ADDED Game Counter Constants ---
+const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204';
+const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000; // 1 minute for periodic updates
+const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521'];
+// --- END ADDED Game Counter Constants ---
+
 const app = express();
 const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
 const discordClient = new Client({
@@ -41,6 +48,10 @@ const discordClient = new Client({
 });
 
 app.use(bodyParser.json({ limit: '500mb' }));
+
+// --- BEGIN ADDED Game Counter Data Structure ---
+let trackedGameIds = new Map(); // Stores <gameId: string, expiryTimestamp: number>
+// --- END ADDED Game Counter Data Structure ---
 
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
@@ -54,14 +65,13 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
             return;
         }
         const logEmbed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description.substring(0, 4000)).setTimestamp();
-        if (interaction) { // interaction can be null if called from non-interaction context
+        if (interaction) { 
             logEmbed.addFields({ name: 'Action Initiated By', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true });
             if (interaction.guild) {
                  logEmbed.addFields({ name: 'Context', value: `Guild: ${interaction.guild.name}\nChannel: ${interaction.channel.name}`, inline: true });
             }
         }
         for (const field of additionalFields) {
-            // Discord embed field limit is 25. Let's aim for less to be safe.
             if (logEmbed.data.fields && logEmbed.data.fields.length >= 23 && additionalFields.length > 0) {
                 logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."}); break;
             }
@@ -74,7 +84,7 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
 
 async function getWhitelistFromGitHub() {
   console.log(`Fetching whitelist: ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}`);
-  let rawDataContent; // For debugging if parsing fails
+  let rawDataContent; 
   try {
     const response = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
@@ -93,12 +103,12 @@ async function getWhitelistFromGitHub() {
 
     let parsedWhitelist;
     if (typeof rawDataContent === 'string') {
-      if (rawDataContent.trim() === "") { // Handle empty file case
+      if (rawDataContent.trim() === "") { 
           console.warn("getWhitelistFromGitHub: Whitelist file is empty. Returning empty array.");
           return [];
       }
       parsedWhitelist = JSON.parse(rawDataContent);
-    } else if (rawDataContent && typeof rawDataContent.content === 'string') { // Should not happen with 'raw' accept header
+    } else if (rawDataContent && typeof rawDataContent.content === 'string') { 
       console.warn("getWhitelistFromGitHub: Received object with 'content' field, expected raw string. Attempting base64 decode.");
       const decodedContent = Buffer.from(rawDataContent.content, 'base64').toString('utf-8');
       if (decodedContent.trim() === "") {
@@ -107,7 +117,6 @@ async function getWhitelistFromGitHub() {
       }
       parsedWhitelist = JSON.parse(decodedContent);
     } else if (typeof rawDataContent === 'object' && rawDataContent !== null && Array.isArray(rawDataContent)) {
-      // If Octokit somehow already parsed it into an array (less likely with 'raw' header)
       parsedWhitelist = rawDataContent;
     } else {
       console.warn("getWhitelistFromGitHub: Received data was not a string, an object with 'content', or an array. Data (partial):", JSON.stringify(rawDataContent).substring(0, 500));
@@ -239,10 +248,9 @@ async function handleBlacklist(interaction) {
     let whitelist;
     try { whitelist = await getWhitelistFromGitHub(); }
     catch (ghError) {
-      // sendActionLogToDiscord is now called within getWhitelistFromGitHub for fetch errors
       return interaction.editReply({ content: `Error fetching whitelist: ${ghError.message}` });
     }
-    if (!Array.isArray(whitelist)) { // Should be caught by getWhitelistFromGitHub, but as a safeguard
+    if (!Array.isArray(whitelist)) { 
         await sendActionLogToDiscord('Blacklist Failed - Whitelist Data Malformed', 'Received non-array whitelist data after GitHub fetch.', interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
         return interaction.editReply({ content: 'Error: Whitelist data is malformed.' });
     }
@@ -257,7 +265,6 @@ async function handleBlacklist(interaction) {
     const newWhitelist = whitelist.filter(entry => entry && entry.Discord !== targetUserId);
     try { await updateWhitelistOnGitHub(newWhitelist, `Blacklist ${targetEntry.User} by ${interaction.user.tag}`); }
     catch (ghError) {
-      // sendActionLogToDiscord is now called within updateWhitelistOnGitHub for update errors
       return interaction.editReply({ content: `Error updating whitelist: ${ghError.message}` });
     }
     let rolesRemovedMessage = "User not in this server or no relevant roles.";
@@ -355,6 +362,65 @@ async function handleGetAssetOrScript(interaction) {
   }
 }
 
+// --- BEGIN ADDED Game Counter Function ---
+async function updateGameCounterChannel() {
+    if (!discordClient || !discordClient.isReady()) {
+        // console.debug("updateGameCounterChannel: Bot not ready, skipping update.");
+        return;
+    }
+    // console.debug("updateGameCounterChannel: Running update check.");
+    const now = Date.now();
+    let activeGameCount = 0;
+    const idsToRemove = [];
+
+    for (const [gameId, expiryTimestamp] of trackedGameIds.entries()) {
+        if (expiryTimestamp < now) {
+            idsToRemove.push(gameId);
+        } else {
+            activeGameCount++;
+        }
+    }
+
+    let countChangedByExpiration = false;
+    if (idsToRemove.length > 0) {
+        countChangedByExpiration = true;
+        for (const id of idsToRemove) {
+            trackedGameIds.delete(id);
+            // console.debug(`Game ID ${id} expired and removed.`);
+        }
+    }
+    
+    // console.debug(`Active game count after expiration check: ${activeGameCount}`);
+
+    try {
+        const channel = await discordClient.channels.fetch(GAME_COUNTER_VOICE_CHANNEL_ID);
+        if (channel && channel.type === ChannelType.GuildVoice) {
+            const newName = `Total Games: ${activeGameCount}`;
+            if (channel.name !== newName) {
+                await channel.setName(newName);
+                console.log(`Updated game counter voice channel name to: ${newName}`);
+            } else {
+                // console.debug(`Game counter voice channel name already up-to-date: ${newName}`);
+            }
+        } else if (channel) {
+            console.warn(`Channel ${GAME_COUNTER_VOICE_CHANNEL_ID} found, but it is not a voice channel. Type: ${channel.type}`);
+        } else {
+            // This case might be hit if fetch returns null, though it usually throws for unknown channel.
+             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} not found.`);
+        }
+    } catch (error) {
+        if (error.code === 10003) { // Unknown Channel
+             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched.`);
+        } else if (error.name === 'DiscordAPIError' && error.status === 403) { // Missing permissions
+             console.error(`Missing permissions to update game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
+        } else {
+             console.error(`Error updating game counter voice channel name for ${GAME_COUNTER_VOICE_CHANNEL_ID}:`, error);
+        }
+    }
+}
+// --- END ADDED Game Counter Function ---
+
+
 // --- Express Routes ---
 app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
 
@@ -365,7 +431,7 @@ app.get('/verify/:username', async (req, res) => {
   let whitelist;
   try {
     whitelist = await getWhitelistFromGitHub();
-    if (!Array.isArray(whitelist)) { // Safeguard, though getWhitelistFromGitHub should throw if not array
+    if (!Array.isArray(whitelist)) { 
         console.error(`Verify error for ${username}: Whitelist data from GitHub was not an array. Type: ${typeof whitelist}`);
         await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data from GitHub was not an array. Type received: ${typeof whitelist}. This indicates a problem with getWhitelistFromGitHub or the Whitelist.json file structure.`, null, 0xFF0000);
         return res.status(500).json({ status: 'error', message: "Internal server error: Whitelist data malformed." });
@@ -379,8 +445,6 @@ app.get('/verify/:username', async (req, res) => {
     res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
   } catch (error) {
     console.error(`Verify error for ${username} (caught in route): ${error.message}`);
-    // Logging to Discord channel is now primarily handled within getWhitelistFromGitHub if it's a fetch/parse error
-    // If the error is different, it means something else went wrong in this route's try block.
     if (!(error.message.includes("Failed to fetch or parse whitelist from GitHub"))) {
         await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
     }
@@ -415,6 +479,7 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   } catch (error) { console.error('Error /scripts/LuaMenu:', error.message); res.status(error.response?.status || 500).json({ status: 'error', message: 'Failed to load LuaMenu script.' }); }
 });
 
+// --- BEGIN MODIFIED/NEW Discord Event Handlers ---
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
   try {
@@ -430,11 +495,81 @@ discordClient.on('interactionCreate', async interaction => {
   }
 });
 
-discordClient.on('ready', () => {
+// New event listener for messageCreate to track game IDs from embeds
+discordClient.on('messageCreate', async message => {
+    if (!TARGET_EMBED_CHANNEL_IDS.includes(message.channel.id)) return;
+    // Optional: if you want to ignore messages from bots (including potentially itself if it ever sends embeds to these channels)
+    // if (message.author.bot) return; 
+    if (!message.embeds || message.embeds.length === 0) return;
+
+    let newGamesFoundThisMessage = false;
+    const now = Date.now();
+    const gameIdRegex = /Roblox\.GameLauncher\.joinGameInstance\(\s*(\d+)\s*,\s*"[^"]+"\s*\)/g;
+
+    for (const embed of message.embeds) {
+        if (!embed.description) continue;
+
+        let match;
+        // Important: Reset lastIndex for global regex when using in a loop or on new strings
+        gameIdRegex.lastIndex = 0; 
+        while ((match = gameIdRegex.exec(embed.description)) !== null) {
+            const gameId = match[1];
+            if (gameId) {
+                const currentExpiry = trackedGameIds.get(gameId);
+                // A game is "newly found" for update purposes if it wasn't tracked or was expired
+                if (!currentExpiry || currentExpiry < now) {
+                    newGamesFoundThisMessage = true;
+                }
+                trackedGameIds.set(gameId, now + GAME_ID_TRACKING_DURATION_MS);
+                // console.debug(`Tracked/updated game ID: ${gameId}, new expiry: ${new Date(now + GAME_ID_TRACKING_DURATION_MS).toLocaleTimeString()}`);
+            }
+        }
+    }
+
+    if (newGamesFoundThisMessage) {
+        // console.debug("New game IDs found in message, triggering immediate update of voice channel name.");
+        await updateGameCounterChannel();
+    }
+});
+
+
+discordClient.on('ready', async () => { // Made this async
   console.log(`Bot logged in as ${discordClient.user.tag} in ${discordClient.guilds.cache.size} guilds.`);
   discordClient.user.setStatus('dnd');
   discordClient.user.setActivity('Managing Whitelists', { type: ActivityType.Watching });
+
+  // --- BEGIN ADDED Game Counter Initialization ---
+  console.log('Bot ready, performing initial game counter update.');
+  try {
+      await updateGameCounterChannel(); // Perform an initial update
+      setInterval(updateGameCounterChannel, GAME_COUNTER_UPDATE_INTERVAL_MS); // Set up periodic updates
+      console.log(`Game counter initialized. Monitoring channels: ${TARGET_EMBED_CHANNEL_IDS.join(', ')}. Updating voice channel: ${GAME_COUNTER_VOICE_CHANNEL_ID}.`);
+  } catch (initError) {
+      console.error("Error during game counter initialization in ready event:", initError);
+  }
+  // --- END ADDED Game Counter Initialization ---
 });
+// --- END MODIFIED/NEW Discord Event Handlers ---
+
+
+app.get('/module/id', async (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
+  }
+
+  try {
+    const rawText = '119529617692199';
+    res.set({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
+    }).send(rawText);
+  } catch (error) {
+    console.error('Error /module/id:', error.message);
+    res.status(500).json({ status: 'error', message: 'Failed to load data.' });
+  }
+});
+
 
 process.on('unhandledRejection', (r, p) => console.error('Unhandled Rejection:', r, p));
 process.on('uncaughtException', e => console.error('Uncaught Exception:', e));
@@ -442,6 +577,8 @@ process.on('uncaughtException', e => console.error('Uncaught Exception:', e));
 async function startServer() {
   try {
     await discordClient.login(config.DISCORD_BOT_TOKEN);
+    // Note: Bot event handlers (like 'ready') are set up before login,
+    // so the game counter will initialize after login completes.
     app.listen(config.PORT, () => console.log(`API on http://localhost:${config.PORT}, Bot connected.`));
   } catch (error) { console.error('Startup failed:', error); process.exit(1); }
 }
