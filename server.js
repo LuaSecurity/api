@@ -4,7 +4,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js'); // Added ChannelType
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
 
 // Config from environment variables
 const config = {
@@ -33,9 +33,9 @@ if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !con
 
 // --- BEGIN ADDED Game Counter Constants ---
 const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204';
-const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936'; // New: For Total Players channel
-const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000; // 30 minutes
-const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000; // 1 minute for periodic updates
+const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936'; 
+const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000; 
+const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000; 
 const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521'];
 // --- END ADDED Game Counter Constants ---
 
@@ -57,7 +57,6 @@ let trackedGameIds = new Map(); // Stores <gameId: string, { expiryTimestamp: nu
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
 
-// Helper function to send logs to the Discord log channel
 async function sendActionLogToDiscord(title, description, interaction, color = 0x0099FF, additionalFields = []) {
     try {
         const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
@@ -82,7 +81,6 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
     } catch (logSendError) { console.error("CRITICAL: Failed to send action log to Discord:", logSendError); }
 }
 
-
 async function getWhitelistFromGitHub() {
   console.log(`Fetching whitelist: ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}`);
   let rawDataContent; 
@@ -92,16 +90,12 @@ async function getWhitelistFromGitHub() {
       path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
       headers: { 'Accept': 'application/vnd.github.v3.raw', 'Cache-Control': 'no-cache, no-store, must-revalidate' }
     });
-    
     rawDataContent = response.data; 
-
     if (response.status !== 200) {
         console.warn(`GitHub API returned status ${response.status} for getWhitelistFromGitHub.`);
         throw new Error(`GitHub API request failed with status ${response.status}`);
     }
-
     console.log("Whitelist content fetched successfully from GitHub. Type of data:", typeof rawDataContent);
-
     let parsedWhitelist;
     if (typeof rawDataContent === 'string') {
       if (rawDataContent.trim() === "") { 
@@ -123,20 +117,16 @@ async function getWhitelistFromGitHub() {
       console.warn("getWhitelistFromGitHub: Received data was not a string, an object with 'content', or an array. Data (partial):", JSON.stringify(rawDataContent).substring(0, 500));
       throw new Error('Unexpected GitHub response format for whitelist content.');
     }
-
     if (!Array.isArray(parsedWhitelist)) {
         console.warn("getWhitelistFromGitHub: Parsed whitelist is not an array. Type:", typeof parsedWhitelist, "Content (partial):", JSON.stringify(parsedWhitelist).substring(0,500));
         throw new Error('Parsed whitelist data from GitHub is not an array.');
     }
-    
     console.log(`Whitelist parsed. Found ${parsedWhitelist.length} entries.`);
     return parsedWhitelist;
-
   } catch (error) {
     console.error(`Error in getWhitelistFromGitHub: ${error.message}`);
     const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,500) : (rawDataContent ? JSON.stringify(rawDataContent).substring(0, 500) : "N/A");
     console.error(`Raw data preview on error (if any): ${rawDataPreview}`);
-    
     await sendActionLogToDiscord(
         'GitHub Whitelist Fetch/Parse Error',
         `Failed to get/parse whitelist from ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}:\n**Error:** ${error.message}\n**Raw Data Preview:** \`\`\`${rawDataPreview}\`\`\``,
@@ -181,17 +171,14 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
   try {
     const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
     if (!channel) throw new Error('Log channel not found for script log.');
-
     const embed = new EmbedBuilder(embedData);
     const messageOptions = { embeds: [embed], components: [] };
-
     if (fullScriptContent && fullScriptContent.trim().length > 0) {
       if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
         embed.setDescription((embed.data.description || '').replace(/```lua\n[\s\S]*?\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
         messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
       }
     }
-
     messageOptions.components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('get_asset_script_from_log')
@@ -222,20 +209,15 @@ async function handleBlacklist(interaction) {
     }
     const rawDescription = embed.description;
     const descriptionToSearch = rawDescription.trim();
-    console.log("--- REGEX DEBUG START (Blacklist) ---");
-    console.log("Trimmed Embed Description (raw, for JSON):", JSON.stringify(descriptionToSearch).substring(0,500) + "...");
     const lines = descriptionToSearch.split('\n');
     let discordLine = null;
     for (const line of lines) { if (line.toLowerCase().includes("discord:")) { discordLine = line; break; } }
-    console.log("Identified potential Discord line:", discordLine);
     let targetUserId = null;
     if (discordLine) {
       const idPatternOnLine = /<@!?(\d+)>/;
       const lineMatch = discordLine.match(idPatternOnLine);
-      if (lineMatch && lineMatch[1]) { targetUserId = lineMatch[1]; console.log("SUCCESSFULLY extracted ID from isolated line:", targetUserId);
-      } else { console.log("FAILED to extract ID from isolated line. Line was:", JSON.stringify(discordLine)); }
-    } else { console.log("Could not isolate a line containing 'discord:'."); }
-    console.log("--- REGEX DEBUG END (Blacklist) ---");
+      if (lineMatch && lineMatch[1]) { targetUserId = lineMatch[1]; }
+    }
     const robloxUsernameRegex = /\*\*Username:\*\* \*\*([^*]+)\*\*/;
     const robloxUsernameMatch = descriptionToSearch.match(robloxUsernameRegex);
     const robloxUsername = robloxUsernameMatch ? robloxUsernameMatch[1] : 'Unknown Roblox User';
@@ -243,9 +225,8 @@ async function handleBlacklist(interaction) {
       const errorMsg = `Failed to match Discord ID. Last discordLine found: ${discordLine ? JSON.stringify(discordLine) : 'null'}. Raw Description (start): ${descriptionToSearch.substring(0,200)}...`;
       console.error(errorMsg);
       await sendActionLogToDiscord('Blacklist Failed - ID Extraction', errorMsg, interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
-      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed (debug attempt failed). Admins notified.' });
+      return interaction.editReply({ content: 'Error: Could not extract Discord ID from the embed. Admins notified.' });
     }
-    console.log(`Extracted for blacklist: Discord ID=${targetUserId}, Roblox User=${robloxUsername}`);
     let whitelist;
     try { whitelist = await getWhitelistFromGitHub(); }
     catch (ghError) {
@@ -295,8 +276,8 @@ async function handleBlacklist(interaction) {
   } catch (error) {
     console.error('Blacklist command main catch error:', error);
     await sendActionLogToDiscord('Blacklist Failed - Unexpected Error', `An unexpected error occurred: ${error.message}\n\`\`\`${error.stack ? error.stack.substring(0,1000) : "No stack"}\n\`\`\``, interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
-    if (hasRepliedOrDeferred && !interaction.replied) { await interaction.editReply({ content: 'An unexpected error occurred during blacklisting. Admins notified.', ephemeral: true }).catch(err => console.error("Error sending final error reply:", err));
-    } else if (!hasRepliedOrDeferred && !interaction.replied) { await interaction.reply({ content: 'An error occurred, and the interaction was not properly deferred. Admins notified.', ephemeral: true }).catch(err => console.error("Error sending emergency reply:", err)); }
+    if (hasRepliedOrDeferred && !interaction.replied) { await interaction.editReply({ content: 'An unexpected error occurred. Admins notified.', ephemeral: true }).catch(err => console.error("Error sending final error reply:", err));
+    } else if (!hasRepliedOrDeferred && !interaction.replied) { await interaction.reply({ content: 'An error occurred. Admins notified.', ephemeral: true }).catch(err => console.error("Error sending emergency reply:", err)); }
   }
 }
 
@@ -321,7 +302,7 @@ async function handleGetAssetOrScript(interaction) {
       }
     }
     if (!scriptContentToAnalyze) {
-      await sendActionLogToDiscord('Asset Download Failed - No Script', 'Could not find script content in the log message to analyze.', interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+      await sendActionLogToDiscord('Asset Download Failed - No Script', 'Could not find script content to analyze.', interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       return interaction.editReply({ content: 'No script content found to analyze for assets.' });
     }
     const assetIds = new Set();
@@ -331,7 +312,7 @@ async function handleGetAssetOrScript(interaction) {
       /Texture(?:Id)?\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi, /SoundId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
       /MeshId\s*=\s*["']rbxassetid:\/\/(\d+)["']/gi,
     ];
-    for (const regex of regexes) { let match; while ((match = regex.exec(scriptContentToAnalyze)) !== null) assetIds.add(match[1] || match[2]); }
+    for (const regex of regexes) { let match; while ((match = regex.exec(scriptContentToAnalyze)) !== null) assetIds.add(match[1] || match[2] || match[3]); } // Ensure all capture groups are considered
     const uniqueAssetIds = Array.from(assetIds).filter(id => id && /^\d+$/.test(id));
     let replyContent = "No downloadable asset IDs found in the script.";
     const assetFiles = [];
@@ -339,114 +320,116 @@ async function handleGetAssetOrScript(interaction) {
       const assetLinks = []; let assetsProcessed = 0;
       for (const assetId of uniqueAssetIds) {
         if (assetsProcessed >= 10) { console.warn("Reached attachment limit for asset download, truncating."); break; }
-        const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file. Use the ID on the Roblox website or in Studio.\nprint("Asset ID: ${assetId}")`;
+        const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- Use this ID on the Roblox website or in Studio.\nprint("Asset ID: ${assetId}")`;
         assetFiles.push(new AttachmentBuilder(Buffer.from(placeholderRbxmContent, 'utf-8'), { name: `${assetId}.rbxm` }));
         assetLinks.push(`[${assetId}](https://www.roblox.com/library/${assetId})`);
         assetsProcessed++;
       }
       if (assetFiles.length > 0) {
         replyContent = `Found Asset ID(s) - Placeholder .rbxm files attached:\n${assetLinks.join('\n')}`;
-        await sendActionLogToDiscord('Assets Found & Sent', `User requested assets. Found: ${assetLinks.join(', ')}. Sent ${assetFiles.length} placeholder rbxm files.`, interaction, 0x00FF00, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+        await sendActionLogToDiscord('Assets Found & Sent', `User requested assets. Found: ${assetLinks.join(', ')}. Sent ${assetFiles.length} placeholder files.`, interaction, 0x00FF00, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       } else {
         replyContent = "Found asset IDs, but encountered an issue preparing them for download.";
         await sendActionLogToDiscord('Asset Download Issue - Preparation', replyContent, interaction, 0xFFA500, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
       }
     } else {
-      await sendActionLogToDiscord('No Assets Found in Script', 'User requested assets, but no recognized IDs were found in the script.', interaction, 0xADD8E6, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
+      await sendActionLogToDiscord('No Assets Found in Script', 'User requested assets, but no recognized IDs were found.', interaction, 0xADD8E6, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
     }
     await interaction.editReply({ content: replyContent, files: assetFiles, ephemeral: true });
   } catch (error) {
     console.error('Get Asset/Script error:', error);
     await sendActionLogToDiscord('Get Asset/Script Failed - Unexpected Error', `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : "N/A"}`, interaction, 0xFF0000, [{name: "Original Message", value: `[Link](${originalMessageURL})`}]);
-    if (hasRepliedOrDeferredAsset && !interaction.replied) await interaction.editReply({ content: 'Error processing asset download request. Admins notified.' }).catch(console.error);
-    else if (!hasRepliedOrDeferredAsset && !interaction.replied) await interaction.reply({ content: 'Error processing asset download request. Admins notified.', ephemeral: true }).catch(console.error);
+    if (hasRepliedOrDeferredAsset && !interaction.replied) await interaction.editReply({ content: 'Error processing request. Admins notified.' }).catch(console.error);
+    else if (!hasRepliedOrDeferredAsset && !interaction.replied) await interaction.reply({ content: 'Error processing request. Admins notified.', ephemeral: true }).catch(console.error);
   }
 }
 
-
-// --- BEGIN MODIFIED Game Counter Function (was updateGameCounterChannel, now handles both) ---
+// Modificado: updateCounterChannels() com depuração
 async function updateCounterChannels() {
     if (!discordClient || !discordClient.isReady()) {
-        // console.debug("updateCounterChannels: Bot not ready, skipping update.");
+        // console.log("[DEBUG] updateCounterChannels: Bot not ready, skipping update.");
         return;
     }
-    // console.debug("updateCounterChannels: Running update cycle.");
+    // console.log("[DEBUG] updateCounterChannels: Running update cycle.");
     const now = Date.now();
     let activeGameCount = 0;
-    let totalPlayerCount = 0; // For the new player counter
+    let totalPlayerCount = 0; 
     const idsToRemove = [];
 
-    // Iterate over tracked games to update counts and find expired ones
+    // console.log("[DEBUG] Current trackedGameIds before cleanup:", new Map(trackedGameIds)); 
+
     for (const [gameId, data] of trackedGameIds.entries()) {
         if (data.expiryTimestamp < now) {
             idsToRemove.push(gameId);
+            // console.log(`[DEBUG] Game ID ${gameId} marked for expiration (Expired at: ${new Date(data.expiryTimestamp).toLocaleTimeString()}).`);
         } else {
             activeGameCount++;
-            totalPlayerCount += (data.players || 0); // Sum players for active games, default to 0 if players undefined
+            totalPlayerCount += (data.players || 0); 
+            // console.log(`[DEBUG] Game ID ${gameId} is active. Players: ${data.players || 0}. Added to counts.`);
         }
     }
 
-    // Remove expired games
     if (idsToRemove.length > 0) {
+        // console.log(`[DEBUG] Removing ${idsToRemove.length} expired game IDs: ${idsToRemove.join(', ')}`);
         for (const id of idsToRemove) {
             trackedGameIds.delete(id);
-            // console.debug(`Game ID ${id} expired and removed from tracking.`);
         }
     }
     
-    // console.debug(`Calculated counts - Active Games: ${activeGameCount}, Total Players: ${totalPlayerCount}`);
+    // console.log(`[DEBUG] Calculated counts - Active Games: ${activeGameCount}, Total Players: ${totalPlayerCount}`);
 
-    // Update "Total Games" Voice Channel Name
     try {
         const gameChannel = await discordClient.channels.fetch(GAME_COUNTER_VOICE_CHANNEL_ID);
         if (gameChannel && gameChannel.type === ChannelType.GuildVoice) {
             const newGameChannelName = `Total Games: ${activeGameCount}`;
             if (gameChannel.name !== newGameChannelName) {
+                // console.log(`[DEBUG] Attempting to set Game Channel name to: ${newGameChannelName}`);
                 await gameChannel.setName(newGameChannelName);
                 console.log(`Updated game counter voice channel name to: ${newGameChannelName}`);
+            } else {
+                // console.log(`[DEBUG] Game Channel name is already up-to-date: ${newGameChannelName}`);
             }
         } else if (gameChannel) {
-            console.warn(`Target channel ${GAME_COUNTER_VOICE_CHANNEL_ID} for games found, but it is not a GuildVoice channel. Type: ${gameChannel.type}`); // Corrected: gameChannel.type
+            console.warn(`[WARN] Target channel ${GAME_COUNTER_VOICE_CHANNEL_ID} for games found, but it is not a GuildVoice channel. Type: ${gameChannel.type}`);
         } else {
-             // This means fetch returned null, less common than throwing an error for unknown channel
-             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null).`);
+             console.warn(`[WARN] Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null/threw for unknown).`);
         }
     } catch (error) {
-        if (error.code === 10003) { // Unknown Channel
-             console.warn(`Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched.`);
-        } else if (error.name === 'DiscordAPIError' && error.status === 403) { // Missing permissions
-             console.error(`Missing permissions to update game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
+        if (error.code === 10003) { 
+             console.warn(`[WARN] Game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched (Error 10003).`);
+        } else if (error.name === 'DiscordAPIError' && error.status === 403) { 
+             console.error(`[ERROR] Missing permissions to update game counter voice channel ${GAME_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
         } else {
-             console.error(`Error updating game counter voice channel name for ${GAME_COUNTER_VOICE_CHANNEL_ID}:`, error);
+             console.error(`[ERROR] Error updating game counter voice channel name for ${GAME_COUNTER_VOICE_CHANNEL_ID}:`, error);
         }
     }
 
-    // Update "Total Players" Voice Channel Name
     try {
         const playerChannel = await discordClient.channels.fetch(PLAYER_COUNTER_VOICE_CHANNEL_ID);
         if (playerChannel && playerChannel.type === ChannelType.GuildVoice) {
             const newPlayerChannelName = `Total Players: ${totalPlayerCount}`;
             if (playerChannel.name !== newPlayerChannelName) {
+                // console.log(`[DEBUG] Attempting to set Player Channel name to: ${newPlayerChannelName}`);
                 await playerChannel.setName(newPlayerChannelName);
                 console.log(`Updated player counter voice channel name to: ${newPlayerChannelName}`);
+            } else {
+                // console.log(`[DEBUG] Player Channel name is already up-to-date: ${newPlayerChannelName}`);
             }
         } else if (playerChannel) {
-            console.warn(`Target channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} for players found, but it is not a GuildVoice channel. Type: ${playerChannel.type}`);
+            console.warn(`[WARN] Target channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} for players found, but it is not a GuildVoice channel. Type: ${playerChannel.type}`);
         } else {
-            console.warn(`Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null).`);
+            console.warn(`[WARN] Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} not found (fetch returned null/threw for unknown).`);
         }
     } catch (error) {
-        if (error.code === 10003) { // Unknown Channel
-            console.warn(`Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched.`);
-        } else if (error.name === 'DiscordAPIError' && error.status === 403) { // Missing permissions
-            console.error(`Missing permissions to update player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
+        if (error.code === 10003) { 
+            console.warn(`[WARN] Player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID} does not exist or could not be fetched (Error 10003).`);
+        } else if (error.name === 'DiscordAPIError' && error.status === 403) { 
+            console.error(`[ERROR] Missing permissions to update player counter voice channel ${PLAYER_COUNTER_VOICE_CHANNEL_ID}. Details: ${error.message}`);
         } else {
-            console.error(`Error updating player counter voice channel name for ${PLAYER_COUNTER_VOICE_CHANNEL_ID}:`, error);
+            console.error(`[ERROR] Error updating player counter voice channel name for ${PLAYER_COUNTER_VOICE_CHANNEL_ID}:`, error);
         }
     }
 }
-// --- END MODIFIED Game Counter Function ---
-
 
 // --- Express Routes ---
 app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
@@ -459,30 +442,28 @@ app.get('/verify/:username', async (req, res) => {
   try {
     whitelist = await getWhitelistFromGitHub();
     if (!Array.isArray(whitelist)) { 
-        console.error(`Verify error for ${username}: Whitelist data from GitHub was not an array. Type: ${typeof whitelist}`);
-        await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data from GitHub was not an array. Type received: ${typeof whitelist}. This indicates a problem with getWhitelistFromGitHub or the Whitelist.json file structure.`, null, 0xFF0000);
+        console.error(`Verify error for ${username}: Whitelist data was not an array. Type: ${typeof whitelist}`);
+        await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data was not an array. Type: ${typeof whitelist}.`, null, 0xFF0000);
         return res.status(500).json({ status: 'error', message: "Internal server error: Whitelist data malformed." });
     }
     const foundUser = whitelist.find(user => user && typeof user.User === 'string' && user.User.toLowerCase() === username.toLowerCase());
     if (!foundUser) {
-      console.log(`/verify/${username}: User not found in whitelist.`);
       return res.status(404).json({ status: 'error', message: "User not found in whitelist." });
     }
-    console.log(`/verify/${username}: User found.`);
     res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
   } catch (error) {
-    console.error(`Verify error for ${username} (caught in route): ${error.message}`);
+    console.error(`Verify error for ${username}: ${error.message}`);
     if (!(error.message.includes("Failed to fetch or parse whitelist from GitHub"))) {
-        await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
+        await sendActionLogToDiscord('Whitelist Verification Route Error', `Error during /verify/${username}: ${error.message}`, null, 0xFF0000);
     }
-    res.status(500).json({ status: 'error', message: "Internal server error during verification." });
+    res.status(500).json({ status: 'error', message: "Internal server error." });
   }
 });
 
 app.get('/download/:assetId', async (req, res) => {
   const assetId = req.params.assetId;
   if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
-  const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file. Use the ID on the Roblox website or in Studio.`;
+  const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- Use this ID on the Roblox website or in Studio.`;
   res.set({ 'Content-Type': 'application/rbxm', 'Content-Disposition': `attachment; filename="${assetId}.rbxm"` }).send(placeholderRbxmContent);
 });
 
@@ -495,7 +476,7 @@ app.post('/send/scriptlogs', async (req, res) => {
     const scriptMatch = (embedData.description || '').match(/```lua\n([\s\S]*?)\n```/);
     await sendToDiscordChannel(embedData, scriptMatch ? scriptMatch[1] : null);
     res.status(200).json({ status: 'success', message: 'Log received.', logId: generateLogId() });
-  } catch (error) { console.error('Error /send/scriptlogs:', error.message); res.status(500).json({ status: 'error', message: "Processing script log failed." }); }
+  } catch (error) { console.error('Error /send/scriptlogs:', error.message); res.status(500).json({ status: 'error', message: "Processing failed." }); }
 });
 
 app.get('/scripts/LuaMenu', async (req, res) => {
@@ -503,31 +484,48 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   try {
     const response = await axios.get(config.GITHUB_LUA_MENU_URL, { timeout: 8000, headers: { 'User-Agent': 'LuaWhitelistServer/1.9' }});
     res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).send(response.data);
-  } catch (error) { console.error('Error /scripts/LuaMenu:', error.message); res.status(error.response?.status || 500).json({ status: 'error', message: 'Failed to load LuaMenu script.' }); }
+  } catch (error) { console.error('Error /scripts/LuaMenu:', error.message); res.status(error.response?.status || 500).json({ status: 'error', message: 'Failed to load script.' }); }
 });
 
-// --- BEGIN MODIFIED/NEW Discord Event Handlers ---
+// --- MODIFIED/NEW Discord Event Handlers ---
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
   try {
     if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
     else if (interaction.customId === 'get_asset_script_from_log') await handleGetAssetOrScript(interaction);
   } catch (error) {
-    console.error('Main Interaction error catcher:', error);
-    await sendActionLogToDiscord( 'Main Interaction Catcher Error', `Error: ${error.message}\n\`\`\`${error.stack ? error.stack.substring(0,1000) : "No stack"}\n\`\`\``, interaction, 0xFF0000);
+    console.error('Main Interaction error:', error);
+    await sendActionLogToDiscord( 'Main Interaction Catcher Error', `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : "N/A"}`, interaction, 0xFF0000);
     if (interaction.isRepliable()) {
-        if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'An unhandled error occurred. Admins notified.', ephemeral: true }).catch(e => console.error("Error sending fallback reply:", e));
-        else if (interaction.deferred && !interaction.replied) await interaction.editReply({ content: 'An unhandled error occurred. Admins notified.', ephemeral: true }).catch(e => console.error("Error sending fallback editReply:", e));
+        if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'An error occurred. Admins notified.', ephemeral: true }).catch(console.error);
+        else if (interaction.deferred && !interaction.replied) await interaction.editReply({ content: 'An error occurred. Admins notified.', ephemeral: true }).catch(console.error);
     }
   }
 });
 
-// New event listener for messageCreate to track game IDs and player counts from embeds
+// Modificado: discordClient.on('messageCreate', ...) com depuração
 discordClient.on('messageCreate', async message => {
-    if (!TARGET_EMBED_CHANNEL_IDS.includes(message.channel.id)) return;
-    // Optional: if you want to ignore messages from bots 
-    // if (message.author.bot) return; 
-    if (!message.embeds || message.embeds.length === 0) return;
+    // console.log(`[DEBUG] Message received in channel ID: ${message.channel.id} (Name: ${message.channel.name || 'N/A (DM?)'}) from user: ${message.author.tag}`);
+
+    if (!TARGET_EMBED_CHANNEL_IDS.includes(message.channel.id)) {
+        // if (message.author.id !== discordClient.user.id) { 
+        //     console.log(`[DEBUG] Message ignored: Not a target channel. Channel ID: ${message.channel.id}`);
+        // }
+        return;
+    }
+    
+    // console.log(`[DEBUG] Message IS in a target channel: ${message.channel.id}`);
+
+    if (message.author.bot) { 
+        // console.log(`[DEBUG] Message ignored: From a bot (${message.author.tag}).`);
+        // return; 
+    }
+
+    if (!message.embeds || message.embeds.length === 0) {
+        // console.log("[DEBUG] Message has no embeds.");
+        return;
+    }
+    // console.log(`[DEBUG] Message has ${message.embeds.length} embed(s).`);
 
     let dataChangedThisMessage = false; 
     const now = Date.now();
@@ -535,33 +533,52 @@ discordClient.on('messageCreate', async message => {
     const activePlayersRegex = /Active Players:\s*(\d+)/i;
 
     for (const embed of message.embeds) {
-        if (!embed.description) continue;
+        // console.log("[DEBUG] Processing embed. Description (first 300 chars):", embed.description ? embed.description.substring(0, 300) : "No description");
+        if (!embed.description) {
+            // console.log("[DEBUG] Embed has no description. Skipping this embed.");
+            continue;
+        }
 
         const gameIdMatch = embed.description.match(gameIdRegex);
         const playersMatch = embed.description.match(activePlayersRegex);
 
+        // console.log("[DEBUG] Game ID Match result:", gameIdMatch ? gameIdMatch[1] : "No match");
+        // console.log("[DEBUG] Players Match result:", playersMatch ? playersMatch[1] : "No match");
+
         if (gameIdMatch && gameIdMatch[1]) { 
             const gameId = gameIdMatch[1];
-            const activePlayers = playersMatch && playersMatch[1] ? parseInt(playersMatch[1], 10) : 0;
+            const activePlayers = playersMatch && playersMatch[1] && !isNaN(parseInt(playersMatch[1], 10)) ? parseInt(playersMatch[1], 10) : 0;
 
             const currentGameData = trackedGameIds.get(gameId);
             const newExpiry = now + GAME_ID_TRACKING_DURATION_MS;
 
-            if (!currentGameData || 
-                currentGameData.expiryTimestamp < now || 
-                (currentGameData.expiryTimestamp >= now && currentGameData.players !== activePlayers) 
-            ) {
+            // console.log(`[DEBUG] For gameId ${gameId}: Extracted players: ${activePlayers}. Current tracked data:`, currentGameData);
+
+            let gameIsNew = !currentGameData;
+            let gameWasExpired = currentGameData && currentGameData.expiryTimestamp < now;
+            let playerCountChangedForActiveGame = currentGameData && currentGameData.expiryTimestamp >= now && currentGameData.players !== activePlayers;
+            
+            if (gameIsNew) { /* console.log(`[DEBUG] Game ${gameId} is new.`); */ }
+            if (gameWasExpired) { /* console.log(`[DEBUG] Game ${gameId} was expired. (Expiry: ${new Date(currentGameData.expiryTimestamp).toLocaleTimeString()}, Now: ${new Date(now).toLocaleTimeString()})`); */ }
+            if (playerCountChangedForActiveGame) { /* console.log(`[DEBUG] Game ${gameId} player count changed. (Tracked: ${currentGameData.players}, Current: ${activePlayers})`); */ }
+
+            if (gameIsNew || gameWasExpired || playerCountChangedForActiveGame) {
                 dataChangedThisMessage = true;
+                // console.log(`[DEBUG] Change detected for game ${gameId}. Setting dataChangedThisMessage = true.`);
             }
             
             trackedGameIds.set(gameId, { expiryTimestamp: newExpiry, players: activePlayers });
-            // console.debug(`Tracked/updated game ID: ${gameId}, players: ${activePlayers}, new expiry: ${new Date(newExpiry).toLocaleTimeString()}`);
+            // console.log(`[DEBUG] Updated/Set trackedGameIds for ${gameId}: players=${activePlayers}, expiry=${new Date(newExpiry).toLocaleTimeString()}`);
+        } else {
+            // console.log("[DEBUG] No gameId found in this embed's description, or regex failed.");
         }
     }
 
     if (dataChangedThisMessage) {
-        // console.debug("Game data (ID or player count) changed, triggering immediate update of counter channels.");
+        // console.log("[DEBUG] dataChangedThisMessage is true. Calling updateCounterChannels().");
         await updateCounterChannels(); 
+    } else {
+        // console.log("[DEBUG] dataChangedThisMessage is false. No immediate channel update triggered by this message.");
     }
 });
 
@@ -571,27 +588,22 @@ discordClient.on('ready', async () => {
   discordClient.user.setStatus('dnd');
   discordClient.user.setActivity('Managing Whitelists', { type: ActivityType.Watching });
 
-  // --- BEGIN MODIFIED Game Counter Initialization ---
   console.log('Bot ready, performing initial counter updates for games and players.');
   try {
       await updateCounterChannels(); 
       setInterval(updateCounterChannels, GAME_COUNTER_UPDATE_INTERVAL_MS); 
-      console.log(`Game and Player counters initialized. Monitoring target embed channels: ${TARGET_EMBED_CHANNEL_IDS.join(', ')}. Updating 'Total Games' voice channel: ${GAME_COUNTER_VOICE_CHANNEL_ID}, 'Total Players' voice channel: ${PLAYER_COUNTER_VOICE_CHANNEL_ID}.`);
+      console.log(`Counters initialized. Monitoring: ${TARGET_EMBED_CHANNEL_IDS.join(', ')}. Games: ${GAME_COUNTER_VOICE_CHANNEL_ID}, Players: ${PLAYER_COUNTER_VOICE_CHANNEL_ID}.`);
   } catch (initError) {
       console.error("Error during counter initialization in 'ready' event:", initError);
   }
-  // --- END MODIFIED Game Counter Initialization ---
 });
-// --- END MODIFIED/NEW Discord Event Handlers ---
-
 
 app.get('/module/id', async (req, res) => {
   if (!isFromRoblox(req)) {
     return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   }
-
   try {
-    const rawText = '119529617692199';
+    const rawText = '119529617692199'; 
     res.set({
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -603,15 +615,12 @@ app.get('/module/id', async (req, res) => {
   }
 });
 
-
 process.on('unhandledRejection', (r, p) => console.error('Unhandled Rejection:', r, p));
 process.on('uncaughtException', e => console.error('Uncaught Exception:', e));
 
 async function startServer() {
   try {
     await discordClient.login(config.DISCORD_BOT_TOKEN);
-    // Note: Bot event handlers (like 'ready') are set up before login,
-    // so the game counter will initialize after login completes.
     app.listen(config.PORT, () => console.log(`API on http://localhost:${config.PORT}, Bot connected.`));
   } catch (error) { console.error('Startup failed:', error); process.exit(1); }
 }
