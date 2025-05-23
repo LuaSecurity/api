@@ -515,10 +515,3 @@ async function startServer() {
 }
 
 startServer();
-
-// console.log("Code with corrected regex is ready."); // For tool execution if it were to run this
-process.stdout.write("Code with corrected regex is ready."); // Send simple signal
-process.stdout.write(JSON.stringify({
-  info:"The regex for 'activePlayersRegex' has been updated to correctly parse player counts, including those enclosed in backticks."
-}));
-process.exit(0);
