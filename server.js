@@ -1,6 +1,3 @@
-// Ensure this is Node.js environment if running, otherwise it's for user's copy-paste
-// The following code will not be executed by the tool, but is provided for the user.
-// require('dotenv').config(); // Keep this if running locally
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
@@ -8,24 +5,23 @@ const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
 
-// Config from environment variables
 const config = {
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-  LOG_CHANNEL_ID: '1373755001234657320', // <<< VERIFIQUE ESTE ID
+  LOG_CHANNEL_ID: '1373755001234657320',
   GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
-  ROLES: { // <<< VERIFIQUE ESTES IDs
+  ROLES: {
     STANDARD: '1330552089759191064',
     PREMIUM: '1333286640248029264',
     ULTIMATE: '1337177751202828300'
   },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100 // Threshold for attaching script as file
+  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100
 };
 
 if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !config.GITHUB_LUA_MENU_URL) {
@@ -33,14 +29,14 @@ if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !con
   process.exit(1);
 }
 
-// --- BEGIN Game Counter Constants ---
-const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204'; // <<< VERIFIQUE ESTE ID
-const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936'; // <<< VERIFIQUE ESTE ID
-const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000; // 30 minutes
-const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
-// TARGET_EMBED_CHANNEL_IDS: Array of TEXT channel IDs where embeds with game info are posted
-const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521']; // <<< VERIFIQUE ESTES IDs
-// --- END Game Counter Constants ---
+const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204';
+const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936';
+const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000;
+const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000;
+const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521'];
+
+const STAFF_LOG_WEBHOOK_URL_1 = process.env.RUBYHUBWEBHOOK;
+const STAFF_LOG_WEBHOOK_URL_2 = process.env.MYWEBHOOK;
 
 const app = express();
 const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
@@ -53,9 +49,7 @@ const discordClient = new Client({
 
 app.use(bodyParser.json({ limit: '500mb' }));
 
-// --- BEGIN Game Counter Data Structure ---
-let trackedGameIds = new Map(); // Stores <gameId: string, { expiryTimestamp: number, players: number }>
-// --- END Game Counter Data Structure ---
+let trackedGameIds = new Map();
 
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
@@ -194,9 +188,8 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
   }
 }
 
-async function handleBlacklist(interaction) { /* Substitua pelo seu código completo da função handleBlacklist */ }
-async function handleGetAssetOrScript(interaction) { /* Substitua pelo seu código completo da função handleGetAssetOrScript */ }
-
+async function handleBlacklist(interaction) { }
+async function handleGetAssetOrScript(interaction) { }
 
 async function updateCounterChannels() {
     if (!discordClient || !discordClient.isReady()) {
@@ -289,7 +282,6 @@ async function updateCounterChannels() {
     }
 }
 
-// --- Express Routes ---
 app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
 
 app.get('/verify/:username', async (req, res) => {
@@ -342,12 +334,50 @@ app.post('/send/scriptlogs', async (req, res) => {
   }
 });
 
+app.post('/send/stafflogs', async (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
+  }
+  const payload = req.body;
+  if (!payload || (Object.keys(payload).length === 0 && payload.constructor === Object)) {
+    return res.status(400).json({ status: 'error', message: 'Request body cannot be empty.' });
+  }
+  try {
+    const promises = [
+      axios.post(STAFF_LOG_WEBHOOK_URL_1, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }),
+      axios.post(STAFF_LOG_WEBHOOK_URL_2, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 5000 })
+    ];
+    const results = await Promise.allSettled(promises);
+    let successCount = 0;
+    let errors = [];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        successCount++;
+        console.log(`[INFO] Successfully sent to staff webhook ${index + 1}`);
+      } else {
+        console.error(`[ERROR] Failed to send to staff webhook ${index + 1}:`, result.reason.message || result.reason);
+        errors.push(`Webhook ${index + 1}: ${result.reason.message || 'Unknown error'}`);
+      }
+    });
+    if (successCount === results.length) {
+      res.status(200).json({ status: 'success', message: 'Payload forwarded to all staff webhooks.' });
+    } else if (successCount > 0) {
+      res.status(207).json({ status: 'partial_success', message: `Payload forwarded to ${successCount}/${results.length} staff webhooks.`, errors: errors });
+    } else {
+      res.status(500).json({ status: 'error', message: 'Failed to forward payload to any staff webhooks.', errors: errors });
+    }
+  } catch (error) {
+    console.error('[ERROR] Error in /send/stafflogs general processing:', error.message);
+    res.status(500).json({ status: 'error', message: 'Server error during staff log forwarding.' });
+  }
+});
+
 app.get('/scripts/LuaMenu', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
   try {
     const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
         timeout: 8000,
-        headers: { 'User-Agent': 'LuaWhitelistServer/1.9.2' } // Incremented version
+        headers: { 'User-Agent': 'LuaWhitelistServer/1.9.2' }
     });
     res.set({
         'Content-Type': 'text/plain; charset=utf-8',
@@ -377,14 +407,9 @@ app.get('/module/id', async (req, res) => {
   }
 });
 
-// --- Discord Event Handlers ---
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
   console.log(`[DEBUG] Button interaction received: ${interaction.customId} by ${interaction.user.tag}`);
-  // Implement your button handlers here (e.g., handleBlacklist, handleGetAssetOrScript)
-  // Example:
-  // if (interaction.customId === 'blacklist_user_from_log') await handleBlacklist(interaction);
-  // else if (interaction.customId === 'get_asset_script_from_log') await handleGetAssetOrScript(interaction);
 });
 
 discordClient.on('messageCreate', async message => {
@@ -392,7 +417,6 @@ discordClient.on('messageCreate', async message => {
 
     if (!TARGET_EMBED_CHANNEL_IDS.includes(message.channel.id)) {
         if (discordClient.user && message.author.id !== discordClient.user.id) {
-            // console.log(`[DEBUG] Message ignored: Not a target channel. Channel ID: ${message.channel.id}`); // Comentado para reduzir spam de log
         }
         return;
     }
@@ -408,8 +432,7 @@ discordClient.on('messageCreate', async message => {
     let dataChangedThisMessage = false;
     const now = Date.now();
     const gameIdRegex = /Roblox\.GameLauncher\.joinGameInstance\(\s*(\d+)\s*,\s*"[^"]+"\s*\)/;
-    // --- UPDATED REGEX ---
-    const activePlayersRegex = /Active\s+Players\s*:\s*\`?(\d+)\`?/i; // Regex to capture digits optionally surrounded by backticks
+    const activePlayersRegex = /Active\s+Players\s*:\s*\`?(\d+)\`?/i;
 
     for (const embed of message.embeds) {
         console.log("[DEBUG] Embed Description (FULL for testing, might be long):", embed.description || "No description");
@@ -467,7 +490,6 @@ discordClient.on('messageCreate', async message => {
             }
 
             trackedGameIds.set(gameId, { expiryTimestamp: newExpiry, players: activePlayers });
-            // console.log(`[DEBUG] Updated/Set trackedGameIds for ${gameId}: players=${activePlayers}, expiry=${new Date(newExpiry).toLocaleTimeString()}`); // Comentado para reduzir spam
         } else {
             console.log("[DEBUG] No gameId found in this embed's description. Skipping this embed for counter purposes.");
         }
@@ -496,7 +518,6 @@ discordClient.on('ready', async () => {
   }
 });
 
-// --- Global Error Handlers & Server Start ---
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
 });
