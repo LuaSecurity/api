@@ -11,7 +11,7 @@ const config = {
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
   LOG_CHANNEL_ID: '1373755001234657320', // Mantido como string fixa
-  GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'RelaxxxX-Lab',
+  GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'LuaSecurity',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
