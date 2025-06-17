@@ -3,55 +3,54 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType } = require('discord.js'); // ChannelType removido pois não é mais usado
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType } = require('discord.js');
+const { StatusCodes } = require('http-status-codes'); // For readable HTTP status codes
 
 const config = {
   API_KEY: process.env.API_KEY,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
   GITHUB_LUA_MENU_URL: process.env.GITHUB_LUA_MENU_URL,
-  LOG_CHANNEL_ID: '1373755001234657320', // Mantido como string fixa
+  LOG_CHANNEL_ID: '1373755001234657320',
   GITHUB_REPO_OWNER: process.env.GITHUB_REPO_OWNER || 'LuaSecurity',
   GITHUB_REPO_NAME: process.env.GITHUB_REPO_NAME || 'Lua-things',
   GITHUB_BRANCH: process.env.GITHUB_BRANCH || 'main',
   WHITELIST_PATH: process.env.WHITELIST_PATH || 'Whitelist.json',
-  ROLES: { // Mantido, pode ser usado por outras partes não mostradas ou futuras
+  ROLES: {
     STANDARD: '1330552089759191064',
     PREMIUM: '1333286640248029264',
     ULTIMATE: '1337177751202828300'
   },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100
+  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100, // Characters
+  STAFF_LOG_WEBHOOK_URL_1: process.env.RUBYHUBWEBHOOK, // Centralized
+  STAFF_LOG_WEBHOOK_URL_2: process.env.MYWEBHOOK,     // Centralized
+  LUA_MENU_CACHE_TTL_MS: 5 * 60 * 1000 // 5 minutes for LuaMenu cache
 };
 
 if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !config.GITHUB_LUA_MENU_URL) {
-  console.error('FATAL ERROR: Missing essential environment variables. Check your .env file.');
-  process.exit(1);
+  console.error('FATAL ERROR: Missing essential environment variables. API_KEY, GITHUB_TOKEN, DISCORD_BOT_TOKEN, GITHUB_LUA_MENU_URL are required. Check your .env file or environment configuration.');
+  process.exit(1); // Exit if critical configs are missing
 }
 
-// Constantes relacionadas a contadores de jogos/jogadores REMOVIDAS
-// const GAME_COUNTER_VOICE_CHANNEL_ID = '1375150160962781204';
-// const PLAYER_COUNTER_VOICE_CHANNEL_ID = '1375161884591783936';
-// const GAME_ID_TRACKING_DURATION_MS = 30 * 60 * 1000;
-// const GAME_COUNTER_UPDATE_INTERVAL_MS = 1 * 60 * 1000;
-// const TARGET_EMBED_CHANNEL_IDS = ['1354602804140048461', '1354602826864791612', '1354602856619184339', '1354602879473684521'];
-
-const STAFF_LOG_WEBHOOK_URL_1 = process.env.RUBYHUBWEBHOOK;
-const STAFF_LOG_WEBHOOK_URL_2 = process.env.MYWEBHOOK;
-
 const app = express();
+// Octokit timeout of 15s is quite generous but can be necessary for larger file operations or slower GitHub responses.
 const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
 const discordClient = new Client({
   intents: [
-    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
-  ] // Mantidos os intents, podem ser refinados se soubermos que MessageContent não é mais necessário
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages, // May be needed for the bot to send messages even if not reading user messages in channels.
+    GatewayIntentBits.MessageContent, // Consider removing if message content is truly no longer processed (e.g., for commands). Interactions don't require it.
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
-app.use(bodyParser.json({ limit: '500mb' }));
+app.use(bodyParser.json({ limit: '500mb' })); // Large limit for script logs, ensure this is necessary and servers can handle it.
 
-// Variável `trackedGameIds` REMOVIDA
-// let trackedGameIds = new Map();
+let luaMenuCache = {
+    content: null,
+    lastFetched: 0
+};
 
 function generateLogId() { return crypto.randomBytes(8).toString('hex'); }
 function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('Roblox'); }
@@ -59,25 +58,33 @@ function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('
 async function sendActionLogToDiscord(title, description, interaction, color = 0x0099FF, additionalFields = []) {
     try {
         const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-        if (!logChannel) {
-            console.error("[ERROR] Failed to fetch log channel for reporting. Channel ID:", config.LOG_CHANNEL_ID);
+        if (!logChannel || !logChannel.isTextBased()) { // Ensure it's a text-based channel
+            console.error(`[ERROR] Failed to fetch log channel or it's not a text channel. Channel ID: ${config.LOG_CHANNEL_ID}`);
             return;
         }
-        const logEmbed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description.substring(0, 4000)).setTimestamp();
-        if (interaction) {
+        const logEmbed = new EmbedBuilder()
+            .setColor(color)
+            .setTitle(title)
+            .setDescription(description.substring(0, 4090)) // Max Discord description length is 4096
+            .setTimestamp();
+
+        if (interaction && interaction.user) {
             logEmbed.addFields({ name: 'Action Initiated By', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true });
-            if (interaction.guild) {
+            if (interaction.guild && interaction.channel) {
                  logEmbed.addFields({ name: 'Context', value: `Guild: ${interaction.guild.name}\nChannel: ${interaction.channel.name}`, inline: true });
             }
         }
         for (const field of additionalFields) {
-            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23 && additionalFields.length > 0) { // Limite de campos do Discord é 25
-                logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."}); break;
+            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23) { // Max 25 fields total
+                logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."});
+                break;
             }
             logEmbed.addFields(field);
         }
         await logChannel.send({ embeds: [logEmbed] });
-    } catch (logSendError) { console.error("[ERROR] CRITICAL: Failed to send action log to Discord:", logSendError); }
+    } catch (logSendError) {
+        console.error("[ERROR] CRITICAL: Failed to send action log to Discord:", logSendError.message, logSendError.stack);
+    }
 }
 
 async function getWhitelistFromGitHub() {
@@ -91,13 +98,13 @@ async function getWhitelistFromGitHub() {
     });
     rawDataContent = response.data;
 
-    if (response.status !== 200) {
+    if (response.status !== StatusCodes.OK) { // Use status code constant
         console.warn(`[WARN] GitHub API returned status ${response.status} for getWhitelistFromGitHub.`);
         throw new Error(`GitHub API request failed with status ${response.status}`);
     }
 
     if (typeof rawDataContent !== 'string') {
-      console.warn("[WARN] getWhitelistFromGitHub: Expected raw string content from GitHub, but received type:", typeof rawDataContent, "Data (partial):", String(rawDataContent).substring(0, 500));
+      console.warn(`[WARN] getWhitelistFromGitHub: Expected raw string content from GitHub, but received type: ${typeof rawDataContent}. Data (partial): ${String(rawDataContent).substring(0, 500)}`);
       throw new Error('Unexpected GitHub response format for whitelist content. Expected raw string.');
     }
 
@@ -109,33 +116,36 @@ async function getWhitelistFromGitHub() {
     const parsedWhitelist = JSON.parse(rawDataContent);
 
     if (!Array.isArray(parsedWhitelist)) {
-        console.warn("[WARN] getWhitelistFromGitHub: Parsed whitelist is not an array. Type:", typeof parsedWhitelist, "Content (partial):", JSON.stringify(parsedWhitelist).substring(0,500));
+        console.warn(`[WARN] getWhitelistFromGitHub: Parsed whitelist is not an array. Type: ${typeof parsedWhitelist}. Content (partial): ${JSON.stringify(parsedWhitelist).substring(0,500)}`);
         throw new Error('Parsed whitelist data from GitHub is not an array.');
     }
-    console.log(`[INFO] Whitelist parsed. Found ${parsedWhitelist.length} entries.`);
+    console.log(`[INFO] Whitelist successfully fetched and parsed. Found ${parsedWhitelist.length} entries.`);
     return parsedWhitelist;
   } catch (error) {
-    console.error(`[ERROR] Error in getWhitelistFromGitHub: ${error.message}`);
-    const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,500) : (rawDataContent ? String(rawDataContent).substring(0, 500) : "N/A");
+    const errorMessage = `Failed to get/parse whitelist from ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}`;
+    console.error(`[ERROR] ${errorMessage}: ${error.message}`);
+    const rawDataPreview = typeof rawDataContent === 'string' ? rawDataContent.substring(0,500) : (rawDataContent ? String(rawDataContent).substring(0, 500) : "N/A (Raw data unavailable or not a string)");
     await sendActionLogToDiscord(
         'GitHub Whitelist Fetch/Parse Error',
-        `Failed to get/parse whitelist from ${config.GITHUB_REPO_OWNER}/${config.GITHUB_REPO_NAME}/${config.WHITELIST_PATH}:\n**Error:** ${error.message}\n**Raw Data Preview (type ${typeof rawDataContent}):** \`\`\`${rawDataPreview}\`\`\``,
+        `${errorMessage}\n**Error:** ${error.message}\n**Raw Data Preview (type ${typeof rawDataContent}):** \`\`\`${rawDataPreview}\`\`\``,
         null, 0xFF0000
     );
-    const newError = new Error(`Failed to fetch or parse whitelist from GitHub. Path: ${config.WHITELIST_PATH}. Original: ${error.message}`);
-    newError.cause = error;
+    const newError = new Error(`${errorMessage}. Original: ${error.message}`);
+    newError.cause = error; // Preserve original error
     throw newError;
   }
 }
 
-async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist') {
-  console.log("[INFO] Updating whitelist on GitHub...");
+async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist via API') {
+  console.log("[INFO] Attempting to update whitelist on GitHub...");
   try {
+    // Get current file SHA to update
     const { data: fileData } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
       path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
-      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' } // Para pegar o SHA mais recente
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
     });
+
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
       path: config.WHITELIST_PATH,
@@ -147,7 +157,8 @@ async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whi
     console.log("[INFO] Whitelist updated successfully on GitHub.");
     return true;
   } catch (error) {
-    console.error(`[ERROR] GitHub API Error (updateWhitelist): Status ${error.status || 'N/A'}, Message: ${error.message}`);
+    const errorMessage = `GitHub API Error (updateWhitelist): Status ${error.status || 'N/A'}, Message: ${error.message}`;
+    console.error(`[ERROR] ${errorMessage}`, error.stack);
     await sendActionLogToDiscord( 'GitHub Whitelist Update Error', `Failed to update whitelist: ${error.message}`, null, 0xFF0000);
     const newError = new Error(`Failed to update whitelist on GitHub. Original: ${error.message}`);
     newError.cause = error;
@@ -161,111 +172,138 @@ const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n' + SCRIPT_IN_ATTACHMENT_PLACE
 async function sendToDiscordChannel(embedData, fullScriptContent = null) {
   try {
     const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-    if (!channel) throw new Error(`Log channel not found for script log. ID: ${config.LOG_CHANNEL_ID}`);
-    const embed = new EmbedBuilder(embedData);
+    if (!channel || !channel.isTextBased()) throw new Error(`Log channel not found or not text-based. ID: ${config.LOG_CHANNEL_ID}`);
+
+    const embed = new EmbedBuilder(embedData); // Creates a new Embed from the provided data
     const messageOptions = { embeds: [embed], components: [] };
-    if (fullScriptContent && fullScriptContent.trim().length > 0) {
+    let scriptToLog = fullScriptContent;
+
+    if (fullScriptContent && typeof fullScriptContent === 'string' && fullScriptContent.trim().length > 0) {
       if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
-        embed.setDescription((embed.data.description || '').replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
+        // Modify the description in the embed if the script is too long
+        if (embed.data.description) {
+            embed.setDescription(embed.data.description.replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
+        } else { // If no description, add a placeholder
+            embed.setDescription(SCRIPT_IN_ATTACHMENT_PLACEHOLDER);
+        }
         messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
+        scriptToLog = SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT; // So it doesn't try to use full script for buttons
+      } else {
+         // Ensure the script in embed is not excessively long for Discord internal limits
+         if (embed.data.description && embed.data.description.length > 4000) {
+            // No direct script replacement here, as it's not going as an attachment
+            // but the embed itself might hit other limits if a large script makes other fields too large.
+            // This is mostly handled by substring in sendActionLogToDiscord but relevant if constructing manually
+         }
       }
     }
+
     messageOptions.components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('get_asset_script_from_log')
         .setLabel('Download Found Assets')
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(!fullScriptContent || fullScriptContent.trim().length === 0)
+        .setDisabled(!scriptToLog || scriptToLog === SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT) // Disable if no script or script is in attachment
     ));
+
     return channel.send(messageOptions);
   } catch (error) {
-      console.error('[ERROR] Discord sendToDiscordChannel (script log) error:', error);
+      console.error('[ERROR] Discord sendToDiscordChannel (script log) error:', error.message, error.stack);
+      // Optionally, send a simplified error log to Discord if this critical function fails
+      // await sendActionLogToDiscord("sendToDiscordChannel Error", `Failed to send script log: ${error.message}`, null, 0xFF0000);
   }
 }
 
-// Funções de placeholder, mantidas conforme o original
-async function handleBlacklist(interaction) { /* Implementação pendente */ }
-async function handleGetAssetOrScript(interaction) { /* Implementação pendente */ }
+// Placeholder implementations for button handlers
+async function handleBlacklist(interaction) {
+  await interaction.reply({ content: 'Blacklist functionality is not yet implemented.', ephemeral: true });
+}
+async function handleGetAssetOrScript(interaction) {
+  await interaction.reply({ content: 'Asset/Script download from log is not yet implemented.', ephemeral: true });
+}
 
-// Função `updateCounterChannels` REMOVIDA
-
-app.get('/', (req, res) => res.status(403).json({ status: 'error', message: 'Access Denied.' }));
+app.get('/', (req, res) => res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Access Denied.' }));
 
 app.get('/verify/:username', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
+  if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
   const username = req.params.username;
-  if (!username) return res.status(400).json({ status: 'error', message: 'Username required.' });
+  if (!username) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Username required.' });
+
   try {
-    const whitelist = await getWhitelistFromGitHub();
-    if (!Array.isArray(whitelist)) { // Essa checagem é redundante se getWhitelistFromGitHub sempre lança erro ou retorna array
-        console.error(`[ERROR] Verify error for ${username}: Whitelist data was not an array.`);
-        await sendActionLogToDiscord('Whitelist Verification Critical Error', `For /verify/${username}, whitelist data from GitHub was not an array. This should have been caught earlier.`, null, 0xFF0000);
-        return res.status(500).json({ status: 'error', message: "Internal server error: Whitelist data malformed." });
-    }
+    const whitelist = await getWhitelistFromGitHub(); // This function already handles array checks or throws
     const foundUser = whitelist.find(user => user && typeof user.User === 'string' && user.User.toLowerCase() === username.toLowerCase());
+
     if (!foundUser) {
       console.log(`[INFO] /verify/${username}: User not found in whitelist.`);
-      return res.status(404).json({ status: 'error', message: "User not found in whitelist." });
+      return res.status(StatusCodes.NOT_FOUND).json({ status: 'error', message: "User not found in whitelist." });
     }
     console.log(`[INFO] /verify/${username}: User found.`);
     res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
   } catch (error) {
-    console.error(`[ERROR] Verify error for ${username} (route): ${error.message}`);
-    // Evita log duplicado se o erro já foi logado por getWhitelistFromGitHub
-    if (!(error.message.includes("Failed to fetch or parse whitelist from GitHub"))) {
+    // getWhitelistFromGitHub already logs its specific errors to Discord.
+    // This general catch is for other unexpected errors or if getWhitelistFromGitHub fails to log.
+    console.error(`[ERROR] Verify route error for ${username}: ${error.message}`, error.stack);
+    if (!(error.message.includes("Failed to get/parse whitelist") || error.message.includes("Failed to fetch or parse whitelist"))) {
         await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
     }
-    res.status(500).json({ status: 'error', message: "Internal server error during verification." });
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: "Internal server error during verification." });
   }
 });
 
-app.get('/download/:assetId', async (req, res) => {
+app.get('/download/:assetId', async (req, res) => { // Remains non-async as it doesn't await anything
   const assetId = req.params.assetId;
-  if (!/^\d+$/.test(assetId)) return res.status(400).json({ status: 'error', message: 'Invalid asset ID.' });
-  const placeholderRbxmContent = `-- Roblox Asset: ${assetId}\n-- This is a placeholder file.\nprint("Asset ID: ${assetId}")`;
-  res.set({ 'Content-Type': 'application/rbxm', 'Content-Disposition': `attachment; filename="${assetId}.rbxm"` }).send(placeholderRbxmContent);
+  if (!/^\d+$/.test(assetId)) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid asset ID format.' });
+
+  const placeholderRbxmContent = `-- Roblox Asset ID: ${assetId}\n-- This is a placeholder for asset download functionality.\nprint("Placeholder for Asset ID: ${assetId}")`;
+  res.set({
+    'Content-Type': 'application/rbxm',
+    'Content-Disposition': `attachment; filename="asset_${assetId}.rbxm"`,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
+  }).send(placeholderRbxmContent);
 });
 
 app.post('/send/scriptlogs', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
-  if (req.headers['authorization'] !== config.API_KEY) return res.status(401).json({ status: 'error', message: 'Invalid API key.' });
-  if (!req.body?.embeds?.length || !req.body.embeds[0]) return res.status(400).json({ status: 'error', message: 'Invalid or missing embed data.' });
+  if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
+  if (req.headers['authorization'] !== config.API_KEY) return res.status(StatusCodes.UNAUTHORIZED).json({ status: 'error', message: 'Invalid API key.' });
+  if (!req.body?.embeds?.length || !req.body.embeds[0]) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid or missing embed data.' });
+
   try {
     const embedData = req.body.embeds[0];
     const scriptMatch = (embedData.description || '').match(/```lua\n([\s\S]*?)\n```/);
     const fullScript = scriptMatch && scriptMatch[1] ? scriptMatch[1] : null;
+
     await sendToDiscordChannel(embedData, fullScript);
-    res.status(200).json({ status: 'success', message: 'Log received.', logId: generateLogId() });
+    res.status(StatusCodes.OK).json({ status: 'success', message: 'Log received and processed.', logId: generateLogId() });
   } catch (error) {
-      console.error('[ERROR] Error in /send/scriptlogs:', error.message);
-      res.status(500).json({ status: 'error', message: "Processing script log failed on server." });
+      console.error('[ERROR] Error in /send/scriptlogs:', error.message, error.stack);
+      // No Discord log here as sendToDiscordChannel might be the cause
+      res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: "Processing script log failed on server." });
   }
 });
 
 app.post('/send/stafflogs', async (req, res) => {
-  if (!isFromRoblox(req)) {
-    return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
-  }
+  if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
+
   const payload = req.body;
-  if (!payload || (Object.keys(payload).length === 0 && payload.constructor === Object)) {
-    return res.status(400).json({ status: 'error', message: 'Request body cannot be empty.' });
+  if (!payload || (typeof payload === 'object' && Object.keys(payload).length === 0 && payload.constructor === Object)) {
+    return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Request body cannot be empty.' });
   }
 
   const webhookTasks = [];
-  if (STAFF_LOG_WEBHOOK_URL_1) webhookTasks.push({ name: "Staff Webhook 1 (RUBYHUBWEBHOOK)", url: STAFF_LOG_WEBHOOK_URL_1 });
-  if (STAFF_LOG_WEBHOOK_URL_2) webhookTasks.push({ name: "Staff Webhook 2 (MYWEBHOOK)", url: STAFF_LOG_WEBHOOK_URL_2 });
+  if (config.STAFF_LOG_WEBHOOK_URL_1) webhookTasks.push({ name: "Staff Webhook 1 (RUBYHUBWEBHOOK)", url: config.STAFF_LOG_WEBHOOK_URL_1 });
+  if (config.STAFF_LOG_WEBHOOK_URL_2) webhookTasks.push({ name: "Staff Webhook 2 (MYWEBHOOK)", url: config.STAFF_LOG_WEBHOOK_URL_2 });
 
   if (webhookTasks.length === 0) {
-    console.error('[ERROR] /send/stafflogs: No staff log webhook URLs configured or URLs are empty.');
-    // Não envie 500 se a intenção é não ter webhooks configurados. Se for erro de config, 500 é ok.
-    // Se as vars de ambiente podem estar vazias intencionalmente, um 200 com mensagem informativa é melhor.
-    // Assumindo que é um erro se não houver para onde enviar:
-    return res.status(500).json({ status: 'error', message: 'Server configuration error: No webhook URLs for staff logs.' });
+    console.warn('[WARN] /send/stafflogs: No staff log webhook URLs configured or URLs are empty. Log not forwarded.');
+    // If it's expected that no webhooks might be configured, this isn't strictly a server error.
+    // Returning 200 OK because the server processed the request, but did nothing with it due to config.
+    return res.status(StatusCodes.OK).json({ status: 'success', message: 'Request processed, but no staff log webhooks are configured.' });
   }
 
   try {
     const promises = webhookTasks.map(wh =>
-      axios.post(wh.url, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 10000 }) // Timeout aumentado para 10s
+      axios.post(wh.url, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 10000 })
     );
     const results = await Promise.allSettled(promises);
 
@@ -279,7 +317,7 @@ app.post('/send/stafflogs', async (req, res) => {
         console.log(`[INFO] Successfully sent to ${webhookName}. Status: ${result.value.status}`);
       } else {
         const reason = result.reason;
-        let errorMessage = 'Unknown error';
+        let errorMessage = 'Unknown error during webhook send.';
         if (reason.isAxiosError) {
           errorMessage = `AxiosError: ${reason.message}`;
           if (reason.response) {
@@ -290,107 +328,195 @@ app.post('/send/stafflogs', async (req, res) => {
         } else if (typeof reason === 'string') {
           errorMessage = reason;
         }
-        console.error(`[ERROR] Failed to send to ${webhookName}:`, errorMessage, reason.stack ? `\nStack: ${reason.stack}` : '');
+        console.error(`[ERROR] Failed to send to ${webhookName}: ${errorMessage}`, reason.stack ? `\nStack: ${reason.stack}` : '');
         errors.push(`${webhookName}: ${errorMessage}`);
       }
     });
 
     if (successCount === webhookTasks.length) {
-      res.status(200).json({ status: 'success', message: 'Payload forwarded to all staff webhooks.' });
+      res.status(StatusCodes.OK).json({ status: 'success', message: 'Payload forwarded to all staff webhooks.' });
     } else if (successCount > 0) {
-      res.status(207).json({ status: 'partial_success', message: `Payload forwarded to ${successCount}/${webhookTasks.length} staff webhooks.`, errors: errors });
+      res.status(StatusCodes.MULTI_STATUS).json({ status: 'partial_success', message: `Payload forwarded to ${successCount}/${webhookTasks.length} staff webhooks.`, errors });
     } else {
-      res.status(500).json({ status: 'error', message: 'Failed to forward payload to any staff webhooks.', errors: errors });
+      // All failed
+      res.status(StatusCodes.BAD_GATEWAY).json({ status: 'error', message: 'Failed to forward payload to any staff webhooks.', errors });
     }
-  } catch (error) { // Este catch é para erros na lógica de preparação das promises, não dos posts individuais
+  } catch (error) { // This catch is for errors in the logic of preparing/managing promises, not for individual webhook failures.
     console.error('[ERROR] Error in /send/stafflogs general processing:', error.message, error.stack);
-    res.status(500).json({ status: 'error', message: 'Server error during staff log forwarding.' });
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: 'Server error during staff log forwarding process.' });
   }
 });
 
-
 app.get('/scripts/LuaMenu', async (req, res) => {
-  if (!isFromRoblox(req)) return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
+  if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
+
+  if (luaMenuCache.content && (Date.now() - luaMenuCache.lastFetched < config.LUA_MENU_CACHE_TTL_MS)) {
+    console.log('[INFO] Serving LuaMenu from cache.');
+    return res.set({
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': `public, max-age=${Math.round((config.LUA_MENU_CACHE_TTL_MS - (Date.now() - luaMenuCache.lastFetched)) / 1000)}`, // Client-side cache instruction
+        'X-Content-Type-Options': 'nosniff'
+    }).send(luaMenuCache.content);
+  }
+
   try {
     const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
-        timeout: 8000,
-        headers: { 'User-Agent': 'LuaWhitelistServer/1.9.2_Optimized' } // Nome do user-agent atualizado
+        timeout: 8000, // 8 second timeout for fetching the script
+        headers: { 'User-Agent': 'LuaWhitelistServer/2.0.0_Optimized' }
     });
+
+    luaMenuCache.content = response.data;
+    luaMenuCache.lastFetched = Date.now();
+    console.log('[INFO] Fetched and cached LuaMenu script from GitHub.');
+
     res.set({
         'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-store', // Para garantir que o script seja sempre o mais recente
+        'Cache-Control': `public, max-age=${Math.round(config.LUA_MENU_CACHE_TTL_MS / 1000)}`, // Client-side cache
         'X-Content-Type-Options': 'nosniff'
     }).send(response.data);
   } catch (error) {
-      console.error('[ERROR] Error /scripts/LuaMenu:', error.isAxiosError ? `${error.message} (Status: ${error.response?.status})` : error.message);
-      res.status(error.response?.status || 500).json({ status: 'error', message: 'Failed to load LuaMenu script.' });
+      const status = error.response?.status || StatusCodes.INTERNAL_SERVER_ERROR;
+      const errorMessage = error.isAxiosError ? `${error.message} (Axios Error, Status: ${error.response?.status})` : error.message;
+      console.error(`[ERROR] Error fetching /scripts/LuaMenu: ${errorMessage}`, error.stack);
+      res.status(status).json({ status: 'error', message: 'Failed to load LuaMenu script.' });
   }
 });
 
-app.get('/module/id', async (req, res) => { // Tornada async por consistência, embora não precise ser
+app.get('/module/id', (req, res) => { // Does not need to be async
   if (!isFromRoblox(req)) {
-    return res.status(403).json({ status: 'error', message: 'Roblox access only.' });
+    return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
   }
-  try {
-    const rawText = '119529617692199'; // ID Fixo
-    res.set({
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff'
-    }).send(rawText);
-  } catch (error) { // Praticamente impossível de acontecer aqui, mas boa prática
-    console.error('[ERROR] Error /module/id:', error.message);
-    res.status(500).json({ status: 'error', message: 'Failed to load data.' });
-  }
+  // This endpoint serves a static ID. No external calls needed.
+  const rawText = '119529617692199'; // Fixed ID
+  res.set({
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600', // Cache for 1 hour as it's static
+    'X-Content-Type-Options': 'nosniff'
+  }).send(rawText);
+  // No practical way for this simple synchronous operation to error unless Express itself fails.
 });
 
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
-  console.log(`[DEBUG] Button interaction received: ${interaction.customId} by ${interaction.user.tag}`);
-  // A lógica para handleBlacklist e handleGetAssetOrScript permanece aqui,
-  // mesmo que as funções estejam vazias, conforme o original.
-  // Exemplo:
-  // if (interaction.customId === 'blacklist_user_from_log') {
-  //   await handleBlacklist(interaction);
-  // } else if (interaction.customId === 'get_asset_script_from_log') {
-  //   await handleGetAssetOrScript(interaction);
-  // }
+
+  console.log(`[DEBUG] Button interaction received: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`);
+
+  try {
+    if (interaction.customId === 'blacklist_user_from_log') {
+      await handleBlacklist(interaction);
+    } else if (interaction.customId === 'get_asset_script_from_log') {
+      await handleGetAssetOrScript(interaction);
+    } else {
+      console.log(`[WARN] Unhandled button interaction: ${interaction.customId}`);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: 'This button is not configured for a response.', ephemeral: true });
+      }
+    }
+  } catch (error) {
+    console.error(`[ERROR] Failed to handle button interaction ${interaction.customId}:`, error.message, error.stack);
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: 'An error occurred while processing this action.', ephemeral: true });
+      } catch (replyError) {
+        console.error('[ERROR] Failed to send error reply to interaction:', replyError.message);
+      }
+    }
+  }
 });
 
 discordClient.on('messageCreate', async message => {
-    // A lógica de contagem de jogos/jogadores baseada em embeds de canais específicos foi REMOVIDA.
-    // Se houver outra funcionalidade que precise processar mensagens, adicione aqui.
-    // Exemplo de log simples, se necessário:
+    // If you need to process messages in the future (e.g., for commands), ensure MessageContent intent is enabled.
+    // For now, if no message content is processed, this handler can be minimal or removed if the intent is disabled.
+    // Example debug log if needed and intent is active:
     // if (!message.author.bot) {
-    //   console.log(`[DEBUG] Message from ${message.author.tag} in ${message.channel.name || 'DM'}: ${message.content.substring(0,50)}`);
+    //   console.log(`[DEBUG] Message from ${message.author.tag} in #${message.channel.name || 'DM'}: ${message.content.substring(0, 50)}...`);
     // }
 });
 
 discordClient.on('ready', async () => {
-  console.log(`[INFO] Bot logged in as ${discordClient.user.tag} in ${discordClient.guilds.cache.size} guilds.`);
-  discordClient.user.setStatus('dnd');
-  discordClient.user.setActivity('Managing Whitelists', { type: ActivityType.Watching });
+  console.log(`[INFO] Bot logged in as ${discordClient.user.tag}.`);
+  console.log(`[INFO] Monitoring ${discordClient.guilds.cache.size} guild(s).`);
+  discordClient.user.setStatus('dnd'); // Do Not Disturb
+  discordClient.user.setActivity('Managing Whitelists & Logs', { type: ActivityType.Watching });
 
-  // Lógica de inicialização e atualização de contadores REMOVIDA
-  console.log('[INFO] Bot ready. Core services initialized.');
+  console.log('[INFO] Discord Bot is ready. Core services initialized.');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason instanceof Error ? `${reason.message}\n${reason.stack}` : reason);
+  // In a real production environment, you might consider logging this to an external service
+  // and potentially restarting the process if it's in an unstable state.
 });
 process.on('uncaughtException', (error) => {
   console.error('[FATAL] Uncaught Exception:', error.message, `\nStack: ${error.stack}`);
-  // Considerar process.exit(1) aqui em produção se o estado do app ficar irrecuperável
+  // This is a critical error. The application might be in an undefined state.
+  // Consider a graceful shutdown attempt, then exit.
+  console.error('Application will now exit due to uncaught exception.');
+  // Attempt to log to Discord before exiting if possible, but it might fail
+  sendActionLogToDiscord(
+    "FATAL Uncaught Exception",
+    `Error: ${error.message}\n\`\`\`${error.stack}\`\`\``,
+    null,
+    0xFF0000 // Red color
+  ).finally(() => {
+    process.exit(1); // Ensure exit even if Discord log fails
+  });
 });
+
+let serverInstance; // To hold the server instance for graceful shutdown
 
 async function startServer() {
   try {
+    console.log('[INFO] Logging into Discord...');
     await discordClient.login(config.DISCORD_BOT_TOKEN);
-    app.listen(config.PORT, () => console.log(`[INFO] API server listening on http://localhost:${config.PORT}. Discord Bot connected.`));
+    // Note: discordClient.on('ready') will fire after login is successful.
+
+    serverInstance = app.listen(config.PORT, () => {
+      console.log(`[INFO] API server listening on http://localhost:${config.PORT}.`);
+      console.log('[INFO] Application started successfully.');
+    });
   } catch (error) {
     console.error('[FATAL] Startup failed:', error.message, error.stack);
+    if (discordClient && discordClient.token) { // If login failed, token is still set
+        discordClient.destroy().catch(e => console.error("Error destroying discord client on startup fail", e));
+    }
     process.exit(1);
   }
 }
+
+async function gracefulShutdown(signal) {
+  console.log(`[INFO] Received ${signal}. Initiating graceful shutdown...`);
+  let exitCode = 0;
+
+  if (serverInstance) {
+    console.log('[INFO] Closing HTTP server...');
+    await new Promise(resolve => serverInstance.close(err => {
+      if (err) {
+        console.error('[ERROR] Error closing HTTP server:', err.message);
+        exitCode = 1;
+      } else {
+        console.log('[INFO] HTTP server closed.');
+      }
+      resolve();
+    }));
+  }
+
+  if (discordClient && discordClient.isReady()) {
+    console.log('[INFO] Destroying Discord client...');
+    try {
+        await discordClient.destroy();
+        console.log('[INFO] Discord client destroyed.');
+    } catch(err) {
+        console.error('[ERROR] Error destroying Discord client:', err.message);
+        exitCode = 1; // Mark as error if discord client fails to destroy cleanly
+    }
+  }
+
+  console.log('[INFO] Graceful shutdown complete. Exiting.');
+  process.exit(exitCode);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT')); // Ctrl+C
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // kill command
 
 startServer();
