@@ -363,10 +363,15 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   }
 });
 
+// MODIFIED ROUTES START HERE
+
 app.get('/module/id', (req, res) => {
-  if (!isFromRoblox(req)) {
-    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  // Redirect if the method is not GET (which is inherently true for app.get handlers)
+  // OR if the request is not from Roblox.
+  if (req.method !== 'GET' || !isFromRoblox(req)) {
+    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
+  // If it's a GET request from Roblox, send the text.
   const rawText = '119529617692199';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
@@ -376,8 +381,8 @@ app.get('/module/id', (req, res) => {
 });
 
 app.get('/moduletest', (req, res) => {
-  if (!isFromRoblox(req)) {
-    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  if (req.method !== 'GET' || !isFromRoblox(req)) {
+    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
   const rawText = '191816425';
   res.set({
@@ -388,8 +393,8 @@ app.get('/moduletest', (req, res) => {
 });
 
 app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
-  if (!isFromRoblox(req)) {
-    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  if (req.method !== 'GET' || !isFromRoblox(req)) {
+    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
   const rawText = '0';
   res.set({
@@ -400,8 +405,8 @@ app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
 });
 
 app.get('/module/id-uhaiasdakdfjasdnzkcmasooefjssoawrjfdsllmwciwefowdfgwerjd', (req, res) => {
-  if (!isFromRoblox(req)) {
-    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  if (req.method !== 'GET' || !isFromRoblox(req)) {
+    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
   const rawText = '0';
   res.set({
@@ -410,6 +415,8 @@ app.get('/module/id-uhaiasdakdfjasdnzkcmasooefjssoawrjfdsllmwciwefowdfgwerjd', (
     'X-Content-Type-Options': 'nosniff'
   }).send(rawText);
 });
+
+// MODIFIED ROUTES END HERE
 
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
