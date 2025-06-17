@@ -251,13 +251,14 @@ app.get('/download/:assetId', (req, res) => {
 app.post('/send/scriptlogs', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
   if (req.headers['authorization'] !== config.API_KEY) return res.status(StatusCodes.UNAUTHORIZED).json({ status: 'error', message: 'Invalid API key.' });
-  if (!req.body?.embeds?.length || !req.body.embeds[0]) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid or missing embed data.' });
+  if (!req.body?.embeds?.length || !req.body.embeds) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid or missing embed data.' });
 
   try {
-    const embedData = req.body.embeds[0];
+    const embedData = req.body.embeds; // This is the embed object from your Lua script
     const scriptMatch = (embedData.description || '').match(/```lua\n([\s\S]*?)\n```/);
-    const fullScript = scriptMatch && scriptMatch[1] ? scriptMatch[1] : null;
+    const fullScript = scriptMatch && scriptMatch ? scriptMatch : null;
 
+    // This function formats and sends the log to your Discord channel
     await sendToDiscordChannel(embedData, fullScript);
     res.status(StatusCodes.OK).json({ status: 'success', message: 'Log received and processed.', logId: generateLogId() });
   } catch (error) {
@@ -265,6 +266,52 @@ app.post('/send/scriptlogs', async (req, res) => {
       res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: "Processing script log failed on server." });
   }
 });
+
+// The function that sends data to Discord
+async function sendToDiscordChannel(embedData, fullScriptContent = null) {
+  try {
+    const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) throw new Error(`Log channel not found or not text-based. ID: ${config.LOG_CHANNEL_ID}`);
+
+    const embed = new EmbedBuilder(embedData); // Creates a Discord.js embed from the Lua payload
+    const messageOptions = { embeds: [embed], components: [] };
+    let scriptToLog = fullScriptContent; // Variable for button disable logic
+
+    if (fullScriptContent && typeof fullScriptContent === 'string' && fullScriptContent.trim().length > 0) {
+      if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
+        // If script is too long, replace in description and add as attachment
+        if (embed.data.description) {
+            embed.setDescription(embed.data.description.replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
+        } else {
+            embed.setDescription(SCRIPT_IN_ATTACHMENT_PLACEHOLDER);
+        }
+        messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
+        scriptToLog = SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT; // Update for button state
+      }
+    }
+
+    // Add buttons (blacklist, download asset - though download might refer to something else here)
+    messageOptions.components.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('get_asset_script_from_log') // This button's utility might need review in context of a logged script
+        .setLabel('Download Found Assets') // Label might be confusing, could be "View Full Script" if placeholder used
+        .setStyle(ButtonStyle.Primary)
+        // Disable button if there's no script or it's just the placeholder text in the log itself.
+        // It's mainly useful when an attachment ISN'T present (script is short and in embed) or
+        // if you implement functionality for it to download the attachment.
+        .setDisabled(!scriptToLog || scriptToLog === SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT)
+    ));
+
+    return channel.send(messageOptions);
+  } catch (error) {
+      console.error('[ERROR] Discord sendToDiscordChannel (script log) error:', error.message, error.stack);
+      // Avoid sending error response to the client (Roblox) for Discord internal errors here
+  }
+}
+
+// Helper: SCRIPT_IN_ATTACHMENT_PLACEHOLDER and SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT should be defined as in your original code
+const SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT = '[Full script content attached as a .lua file due to length.]';
+const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n' + SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT + '\n```';
 
 app.post('/send/stafflogs', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
@@ -380,23 +427,11 @@ app.get('/module/id', (req, res) => {
   }).send(rawText);
 });
 
-app.get('/moduletest', (req, res) => {
-  if (req.method !== 'GET' || !isFromRoblox(req)) {
-    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-  }
-  const rawText = '191816425';
-  res.set({
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600',
-    'X-Content-Type-Options': 'nosniff'
-  }).send(rawText);
-});
-
 app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
   if (req.method !== 'GET' || !isFromRoblox(req)) {
     return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
-  const rawText = '0';
+  const rawText = '998889275562590';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
     'Cache-Control': 'public, max-age=3600',
