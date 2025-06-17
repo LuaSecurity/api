@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, ActivityType } = require('discord.js');
-const { StatusCodes } = require('http-status-codes'); // For readable HTTP status codes
+const { StatusCodes } = require('http-status-codes');
 
 const config = {
   API_KEY: process.env.API_KEY,
@@ -22,30 +22,29 @@ const config = {
     ULTIMATE: '1337177751202828300'
   },
   PORT: process.env.PORT || 3000,
-  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100, // Characters
-  STAFF_LOG_WEBHOOK_URL_1: process.env.RUBYHUBWEBHOOK, // Centralized
-  STAFF_LOG_WEBHOOK_URL_2: process.env.MYWEBHOOK,     // Centralized
-  LUA_MENU_CACHE_TTL_MS: 5 * 60 * 1000 // 5 minutes for LuaMenu cache
+  SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT: 100,
+  STAFF_LOG_WEBHOOK_URL_1: process.env.RUBYHUBWEBHOOK,
+  STAFF_LOG_WEBHOOK_URL_2: process.env.MYWEBHOOK,
+  LUA_MENU_CACHE_TTL_MS: 5 * 60 * 1000
 };
 
 if (!config.API_KEY || !config.GITHUB_TOKEN || !config.DISCORD_BOT_TOKEN || !config.GITHUB_LUA_MENU_URL) {
   console.error('FATAL ERROR: Missing essential environment variables. API_KEY, GITHUB_TOKEN, DISCORD_BOT_TOKEN, GITHUB_LUA_MENU_URL are required. Check your .env file or environment configuration.');
-  process.exit(1); // Exit if critical configs are missing
+  process.exit(1);
 }
 
 const app = express();
-// Octokit timeout of 15s is quite generous but can be necessary for larger file operations or slower GitHub responses.
 const octokit = new Octokit({ auth: config.GITHUB_TOKEN, request: { timeout: 15000 } });
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages, // May be needed for the bot to send messages even if not reading user messages in channels.
-    GatewayIntentBits.MessageContent, // Consider removing if message content is truly no longer processed (e.g., for commands). Interactions don't require it.
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers
   ]
 });
 
-app.use(bodyParser.json({ limit: '500mb' })); // Large limit for script logs, ensure this is necessary and servers can handle it.
+app.use(bodyParser.json({ limit: '500mb' }));
 
 let luaMenuCache = {
     content: null,
@@ -58,14 +57,14 @@ function isFromRoblox(req) { return (req.headers['user-agent'] || '').includes('
 async function sendActionLogToDiscord(title, description, interaction, color = 0x0099FF, additionalFields = []) {
     try {
         const logChannel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-        if (!logChannel || !logChannel.isTextBased()) { // Ensure it's a text-based channel
+        if (!logChannel || !logChannel.isTextBased()) {
             console.error(`[ERROR] Failed to fetch log channel or it's not a text channel. Channel ID: ${config.LOG_CHANNEL_ID}`);
             return;
         }
         const logEmbed = new EmbedBuilder()
             .setColor(color)
             .setTitle(title)
-            .setDescription(description.substring(0, 4090)) // Max Discord description length is 4096
+            .setDescription(description.substring(0, 4090))
             .setTimestamp();
 
         if (interaction && interaction.user) {
@@ -75,7 +74,7 @@ async function sendActionLogToDiscord(title, description, interaction, color = 0
             }
         }
         for (const field of additionalFields) {
-            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23) { // Max 25 fields total
+            if (logEmbed.data.fields && logEmbed.data.fields.length >= 23) {
                 logEmbed.addFields({name: "Details Truncated", value: "Too many fields for one embed."});
                 break;
             }
@@ -98,7 +97,7 @@ async function getWhitelistFromGitHub() {
     });
     rawDataContent = response.data;
 
-    if (response.status !== StatusCodes.OK) { // Use status code constant
+    if (response.status !== StatusCodes.OK) {
         console.warn(`[WARN] GitHub API returned status ${response.status} for getWhitelistFromGitHub.`);
         throw new Error(`GitHub API request failed with status ${response.status}`);
     }
@@ -131,7 +130,7 @@ async function getWhitelistFromGitHub() {
         null, 0xFF0000
     );
     const newError = new Error(`${errorMessage}. Original: ${error.message}`);
-    newError.cause = error; // Preserve original error
+    newError.cause = error;
     throw newError;
   }
 }
@@ -139,7 +138,6 @@ async function getWhitelistFromGitHub() {
 async function updateWhitelistOnGitHub(newWhitelist, actionMessage = 'Update whitelist via API') {
   console.log("[INFO] Attempting to update whitelist on GitHub...");
   try {
-    // Get current file SHA to update
     const { data: fileData } = await octokit.rest.repos.getContent({
       owner: config.GITHUB_REPO_OWNER, repo: config.GITHUB_REPO_NAME,
       path: config.WHITELIST_PATH, ref: config.GITHUB_BRANCH,
@@ -174,27 +172,19 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
     const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
     if (!channel || !channel.isTextBased()) throw new Error(`Log channel not found or not text-based. ID: ${config.LOG_CHANNEL_ID}`);
 
-    const embed = new EmbedBuilder(embedData); // Creates a new Embed from the provided data
+    const embed = new EmbedBuilder(embedData);
     const messageOptions = { embeds: [embed], components: [] };
     let scriptToLog = fullScriptContent;
 
     if (fullScriptContent && typeof fullScriptContent === 'string' && fullScriptContent.trim().length > 0) {
       if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
-        // Modify the description in the embed if the script is too long
         if (embed.data.description) {
             embed.setDescription(embed.data.description.replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
-        } else { // If no description, add a placeholder
+        } else {
             embed.setDescription(SCRIPT_IN_ATTACHMENT_PLACEHOLDER);
         }
         messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
-        scriptToLog = SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT; // So it doesn't try to use full script for buttons
-      } else {
-         // Ensure the script in embed is not excessively long for Discord internal limits
-         if (embed.data.description && embed.data.description.length > 4000) {
-            // No direct script replacement here, as it's not going as an attachment
-            // but the embed itself might hit other limits if a large script makes other fields too large.
-            // This is mostly handled by substring in sendActionLogToDiscord but relevant if constructing manually
-         }
+        scriptToLog = SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT;
       }
     }
 
@@ -203,18 +193,15 @@ async function sendToDiscordChannel(embedData, fullScriptContent = null) {
       new ButtonBuilder().setCustomId('get_asset_script_from_log')
         .setLabel('Download Found Assets')
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(!scriptToLog || scriptToLog === SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT) // Disable if no script or script is in attachment
+        .setDisabled(!scriptToLog || scriptToLog === SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT)
     ));
 
     return channel.send(messageOptions);
   } catch (error) {
       console.error('[ERROR] Discord sendToDiscordChannel (script log) error:', error.message, error.stack);
-      // Optionally, send a simplified error log to Discord if this critical function fails
-      // await sendActionLogToDiscord("sendToDiscordChannel Error", `Failed to send script log: ${error.message}`, null, 0xFF0000);
   }
 }
 
-// Placeholder implementations for button handlers
 async function handleBlacklist(interaction) {
   await interaction.reply({ content: 'Blacklist functionality is not yet implemented.', ephemeral: true });
 }
@@ -230,7 +217,7 @@ app.get('/verify/:username', async (req, res) => {
   if (!username) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Username required.' });
 
   try {
-    const whitelist = await getWhitelistFromGitHub(); // This function already handles array checks or throws
+    const whitelist = await getWhitelistFromGitHub();
     const foundUser = whitelist.find(user => user && typeof user.User === 'string' && user.User.toLowerCase() === username.toLowerCase());
 
     if (!foundUser) {
@@ -240,8 +227,6 @@ app.get('/verify/:username', async (req, res) => {
     console.log(`[INFO] /verify/${username}: User found.`);
     res.json({ status: 'success', data: { username: foundUser.User, discordId: foundUser.Discord, tier: foundUser.Whitelist }});
   } catch (error) {
-    // getWhitelistFromGitHub already logs its specific errors to Discord.
-    // This general catch is for other unexpected errors or if getWhitelistFromGitHub fails to log.
     console.error(`[ERROR] Verify route error for ${username}: ${error.message}`, error.stack);
     if (!(error.message.includes("Failed to get/parse whitelist") || error.message.includes("Failed to fetch or parse whitelist"))) {
         await sendActionLogToDiscord('Whitelist Verification Route Error', `Unexpected error during /verify/${username}: ${error.message}`, null, 0xFF0000);
@@ -250,7 +235,7 @@ app.get('/verify/:username', async (req, res) => {
   }
 });
 
-app.get('/download/:assetId', async (req, res) => { // Remains non-async as it doesn't await anything
+app.get('/download/:assetId', (req, res) => {
   const assetId = req.params.assetId;
   if (!/^\d+$/.test(assetId)) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid asset ID format.' });
 
@@ -277,7 +262,6 @@ app.post('/send/scriptlogs', async (req, res) => {
     res.status(StatusCodes.OK).json({ status: 'success', message: 'Log received and processed.', logId: generateLogId() });
   } catch (error) {
       console.error('[ERROR] Error in /send/scriptlogs:', error.message, error.stack);
-      // No Discord log here as sendToDiscordChannel might be the cause
       res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: "Processing script log failed on server." });
   }
 });
@@ -296,8 +280,6 @@ app.post('/send/stafflogs', async (req, res) => {
 
   if (webhookTasks.length === 0) {
     console.warn('[WARN] /send/stafflogs: No staff log webhook URLs configured or URLs are empty. Log not forwarded.');
-    // If it's expected that no webhooks might be configured, this isn't strictly a server error.
-    // Returning 200 OK because the server processed the request, but did nothing with it due to config.
     return res.status(StatusCodes.OK).json({ status: 'success', message: 'Request processed, but no staff log webhooks are configured.' });
   }
 
@@ -338,10 +320,9 @@ app.post('/send/stafflogs', async (req, res) => {
     } else if (successCount > 0) {
       res.status(StatusCodes.MULTI_STATUS).json({ status: 'partial_success', message: `Payload forwarded to ${successCount}/${webhookTasks.length} staff webhooks.`, errors });
     } else {
-      // All failed
       res.status(StatusCodes.BAD_GATEWAY).json({ status: 'error', message: 'Failed to forward payload to any staff webhooks.', errors });
     }
-  } catch (error) { // This catch is for errors in the logic of preparing/managing promises, not for individual webhook failures.
+  } catch (error) {
     console.error('[ERROR] Error in /send/stafflogs general processing:', error.message, error.stack);
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ status: 'error', message: 'Server error during staff log forwarding process.' });
   }
@@ -354,14 +335,14 @@ app.get('/scripts/LuaMenu', async (req, res) => {
     console.log('[INFO] Serving LuaMenu from cache.');
     return res.set({
         'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': `public, max-age=${Math.round((config.LUA_MENU_CACHE_TTL_MS - (Date.now() - luaMenuCache.lastFetched)) / 1000)}`, // Client-side cache instruction
+        'Cache-Control': `public, max-age=${Math.round((config.LUA_MENU_CACHE_TTL_MS - (Date.now() - luaMenuCache.lastFetched)) / 1000)}`,
         'X-Content-Type-Options': 'nosniff'
     }).send(luaMenuCache.content);
   }
 
   try {
     const response = await axios.get(config.GITHUB_LUA_MENU_URL, {
-        timeout: 8000, // 8 second timeout for fetching the script
+        timeout: 8000,
         headers: { 'User-Agent': 'LuaWhitelistServer/2.0.0_Optimized' }
     });
 
@@ -371,7 +352,7 @@ app.get('/scripts/LuaMenu', async (req, res) => {
 
     res.set({
         'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': `public, max-age=${Math.round(config.LUA_MENU_CACHE_TTL_MS / 1000)}`, // Client-side cache
+        'Cache-Control': `public, max-age=${Math.round(config.LUA_MENU_CACHE_TTL_MS / 1000)}`,
         'X-Content-Type-Options': 'nosniff'
     }).send(response.data);
   } catch (error) {
@@ -382,18 +363,16 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   }
 });
 
-app.get('/module/id', (req, res) => { // Does not need to be async
+app.get('/module/id', (req, res) => {
   if (!isFromRoblox(req)) {
     return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
   }
-  // This endpoint serves a static ID. No external calls needed.
-  const rawText = '119529617692199'; // Fixed ID
+  const rawText = '119529617692199';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600', // Cache for 1 hour as it's static
+    'Cache-Control': 'public, max-age=3600',
     'X-Content-Type-Options': 'nosniff'
   }).send(rawText);
-  // No practical way for this simple synchronous operation to error unless Express itself fails.
 });
 
 discordClient.on('interactionCreate', async interaction => {
@@ -425,59 +404,45 @@ discordClient.on('interactionCreate', async interaction => {
 });
 
 discordClient.on('messageCreate', async message => {
-    // If you need to process messages in the future (e.g., for commands), ensure MessageContent intent is enabled.
-    // For now, if no message content is processed, this handler can be minimal or removed if the intent is disabled.
-    // Example debug log if needed and intent is active:
-    // if (!message.author.bot) {
-    //   console.log(`[DEBUG] Message from ${message.author.tag} in #${message.channel.name || 'DM'}: ${message.content.substring(0, 50)}...`);
-    // }
 });
 
 discordClient.on('ready', async () => {
   console.log(`[INFO] Bot logged in as ${discordClient.user.tag}.`);
   console.log(`[INFO] Monitoring ${discordClient.guilds.cache.size} guild(s).`);
-  discordClient.user.setStatus('dnd'); // Do Not Disturb
+  discordClient.user.setStatus('dnd');
   discordClient.user.setActivity('Managing Whitelists & Logs', { type: ActivityType.Watching });
-
   console.log('[INFO] Discord Bot is ready. Core services initialized.');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason instanceof Error ? `${reason.message}\n${reason.stack}` : reason);
-  // In a real production environment, you might consider logging this to an external service
-  // and potentially restarting the process if it's in an unstable state.
 });
 process.on('uncaughtException', (error) => {
   console.error('[FATAL] Uncaught Exception:', error.message, `\nStack: ${error.stack}`);
-  // This is a critical error. The application might be in an undefined state.
-  // Consider a graceful shutdown attempt, then exit.
   console.error('Application will now exit due to uncaught exception.');
-  // Attempt to log to Discord before exiting if possible, but it might fail
   sendActionLogToDiscord(
     "FATAL Uncaught Exception",
     `Error: ${error.message}\n\`\`\`${error.stack}\`\`\``,
     null,
-    0xFF0000 // Red color
+    0xFF0000
   ).finally(() => {
-    process.exit(1); // Ensure exit even if Discord log fails
+    process.exit(1);
   });
 });
 
-let serverInstance; // To hold the server instance for graceful shutdown
+let serverInstance;
 
 async function startServer() {
   try {
     console.log('[INFO] Logging into Discord...');
     await discordClient.login(config.DISCORD_BOT_TOKEN);
-    // Note: discordClient.on('ready') will fire after login is successful.
-
     serverInstance = app.listen(config.PORT, () => {
       console.log(`[INFO] API server listening on http://localhost:${config.PORT}.`);
       console.log('[INFO] Application started successfully.');
     });
   } catch (error) {
     console.error('[FATAL] Startup failed:', error.message, error.stack);
-    if (discordClient && discordClient.token) { // If login failed, token is still set
+    if (discordClient && discordClient.token) {
         discordClient.destroy().catch(e => console.error("Error destroying discord client on startup fail", e));
     }
     process.exit(1);
@@ -508,7 +473,7 @@ async function gracefulShutdown(signal) {
         console.log('[INFO] Discord client destroyed.');
     } catch(err) {
         console.error('[ERROR] Error destroying Discord client:', err.message);
-        exitCode = 1; // Mark as error if discord client fails to destroy cleanly
+        exitCode = 1;
     }
   }
 
@@ -516,7 +481,7 @@ async function gracefulShutdown(signal) {
   process.exit(exitCode);
 }
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT')); // Ctrl+C
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // kill command
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 startServer();
