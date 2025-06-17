@@ -365,9 +365,33 @@ app.get('/scripts/LuaMenu', async (req, res) => {
 
 app.get('/module/id', (req, res) => {
   if (!isFromRoblox(req)) {
-    return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
+    return res.status(StatusCodes.FORBIDDEN).json(191816425);
   }
   const rawText = '119529617692199';
+  res.set({
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600',
+    'X-Content-Type-Options': 'nosniff'
+  }).send(rawText);
+});
+
+app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  }
+  const rawText = '0';
+  res.set({
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600',
+    'X-Content-Type-Options': 'nosniff'
+  }).send(rawText);
+});
+
+app.get('/module/id-uhaiasdakdfjasdnzkcmasooefjssoawrjfdsllmwciwefowdfgwerjd', (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  }
+  const rawText = '0';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
     'Cache-Control': 'public, max-age=3600',
