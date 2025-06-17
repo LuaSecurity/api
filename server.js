@@ -375,6 +375,18 @@ app.get('/module/id', (req, res) => {
   }).send(rawText);
 });
 
+app.get('/moduletest', (req, res) => {
+  if (!isFromRoblox(req)) {
+    return res.status(StatusCodes.FORBIDDEN).json(191816425);
+  }
+  const rawText = '191816425';
+  res.set({
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600',
+    'X-Content-Type-Options': 'nosniff'
+  }).send(rawText);
+});
+
 app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
   if (!isFromRoblox(req)) {
     return res.status(StatusCodes.FORBIDDEN).json(191816425);
