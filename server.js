@@ -431,7 +431,7 @@ app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
   if (req.method !== 'GET' || !isFromRoblox(req)) {
     return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
-  const rawText = '998889275562590';
+  const rawText = '77112923199279';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
     'Cache-Control': 'public, max-age=3600',
@@ -443,7 +443,7 @@ app.get('/module/id-uhaiasdakdfjasdnzkcmasooefjssoawrjfdsllmwciwefowdfgwerjd', (
   if (req.method !== 'GET' || !isFromRoblox(req)) {
     return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   }
-  const rawText = '0';
+  const rawText = '998889275562590';
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
     'Cache-Control': 'public, max-age=3600',
