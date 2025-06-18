@@ -254,11 +254,11 @@ app.post('/send/scriptlogs', async (req, res) => {
   if (!req.body?.embeds?.length || !req.body.embeds) return res.status(StatusCodes.BAD_REQUEST).json({ status: 'error', message: 'Invalid or missing embed data.' });
 
   try {
-    const embedData = req.body.embeds;
+    const embedData = req.body.embeds; 
     const scriptMatch = (embedData.description || '').match(/```lua\n([\s\S]*?)\n```/);
-    const fullScript = scriptMatch && scriptMatch ? scriptMatch : null;
+    const fullScript = scriptMatch && scriptMatch[1] ? scriptMatch[1] : null; 
 
-    await sendToDiscordChannel(embedData, fullScript);
+    await sendToDiscordChannel(embedData, fullScript); 
     res.status(StatusCodes.OK).json({ status: 'success', message: 'Log received and processed.', logId: generateLogId() });
   } catch (error) {
       console.error('[ERROR] Error in /send/scriptlogs:', error.message, error.stack);
@@ -266,43 +266,6 @@ app.post('/send/scriptlogs', async (req, res) => {
   }
 });
 
-async function sendToDiscordChannel(embedData, fullScriptContent = null) {
-  try {
-    const channel = await discordClient.channels.fetch(config.LOG_CHANNEL_ID);
-    if (!channel || !channel.isTextBased()) throw new Error(`Log channel not found or not text-based. ID: ${config.LOG_CHANNEL_ID}`);
-
-    const embed = new EmbedBuilder(embedData);
-    const messageOptions = { embeds: [embed], components: [] };
-    let scriptToLog = fullScriptContent;
-
-    if (fullScriptContent && typeof fullScriptContent === 'string' && fullScriptContent.trim().length > 0) {
-      if (fullScriptContent.length > config.SCRIPT_LENGTH_THRESHOLD_FOR_ATTACHMENT) {
-        if (embed.data.description) {
-            embed.setDescription(embed.data.description.replace(/```lua\n([\s\S]*?)\n```/, SCRIPT_IN_ATTACHMENT_PLACEHOLDER));
-        } else {
-            embed.setDescription(SCRIPT_IN_ATTACHMENT_PLACEHOLDER);
-        }
-        messageOptions.files = [new AttachmentBuilder(Buffer.from(fullScriptContent, 'utf-8'), { name: `script_log_${generateLogId()}.lua` })];
-        scriptToLog = SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT;
-      }
-    }
-
-    messageOptions.components.push(new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('blacklist_user_from_log').setLabel('Blacklist User').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('get_asset_script_from_log')
-        .setLabel('Download Found Assets')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(!scriptToLog || scriptToLog === SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT)
-    ));
-
-    return channel.send(messageOptions);
-  } catch (error) {
-      console.error('[ERROR] Discord sendToDiscordChannel (script log) error:', error.message, error.stack);
-  }
-}
-
-const SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT = '[Full script content attached as a .lua file due to length.]';
-const SCRIPT_IN_ATTACHMENT_PLACEHOLDER = '```lua\n' + SCRIPT_IN_ATTACHMENT_PLACEHOLDER_TEXT + '\n```';
 
 app.post('/send/stafflogs', async (req, res) => {
   if (!isFromRoblox(req)) return res.status(StatusCodes.FORBIDDEN).json({ status: 'error', message: 'Roblox access only.' });
