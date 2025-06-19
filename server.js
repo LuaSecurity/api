@@ -364,42 +364,6 @@ app.get('/scripts/LuaMenu', async (req, res) => {
   }
 });
 
-app.get('/module/id', (req, res) => {
-  if (req.method !== 'GET' || !isFromRoblox(req)) {
-    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-  }
-  const rawText = '77112923199279';
-  res.set({
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600',
-    'X-Content-Type-Options': 'nosniff'
-  }).send(rawText);
-});
-
-app.get('/module/id-uhqdjkkajskncajwdghajdakwfkawofqweudajfdoa', (req, res) => {
-  if (req.method !== 'GET' || !isFromRoblox(req)) {
-    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-  }
-  const rawText = '99888927556259';
-  res.set({
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600',
-    'X-Content-Type-Options': 'nosniff'
-  }).send(rawText);
-});
-
-app.get('/module/id-uhaiasdakdfjasdnzkcmasooefjssoawrjfdsllmwciwefowdfgwerjd', (req, res) => {
-  if (req.method !== 'GET' || !isFromRoblox(req)) {
-    return res.redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-  }
-  const rawText = '00000000';
-  res.set({
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600',
-    'X-Content-Type-Options': 'nosniff'
-  }).send(rawText);
-});
-
 discordClient.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
